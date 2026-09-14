@@ -1,7 +1,7 @@
 {
   "name": "@tyu/jlc-kernel",
-  "version": "0.1.0",
-  "description": "JLC: a dependency-free, lifecycle-safe translation kernel for browser interfaces",
+  "version": "0.2.0",
+  "description": "JLC: a dependency-free bytecode virtual machine and compiler for browser interfaces",
   "type": "module",
   "main": "./jlc.js",
   "module": "./jlc.js",
@@ -11,24 +11,38 @@
       "types": "./jlc.d.ts",
       "import": "./jlc.js",
       "default": "./jlc.js"
+    },
+    "./vm": {
+      "types": "./jlc.d.ts",
+      "import": "./jlc-vm.js",
+      "default": "./jlc-vm.js"
+    },
+    "./compiler": {
+      "types": "./jlc.d.ts",
+      "import": "./jlc-compiler.js",
+      "default": "./jlc-compiler.js"
     }
   },
   "files": [
     "jlc.js",
+    "jlc-vm.js",
+    "jlc-compiler.js",
     "jlc.d.ts",
     "README.md",
     "SPEC.md",
+    "JBC.md",
     "LICENSE"
   ],
   "sideEffects": false,
   "scripts": {
     "test": "node --test",
-    "check": "node --check jlc.js && node --test"
+    "check": "node --check jlc.js && node --check jlc-vm.js && node --check jlc-compiler.js && node --test"
   },
   "keywords": [
     "jlc",
     "language",
-    "frontend",
+    "bytecode",
+    "virtual-machine",
     "reactive",
     "dom",
     "kernel"

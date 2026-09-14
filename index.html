@@ -552,6 +552,59 @@
   }
   .footer .dot { color: var(--accent); }
 
+  /* ---------- JBC 字节码检查器 ---------- */
+  .jbc-panel {
+    margin: 18px auto 0;
+    max-width: 1060px;
+    border: 3px solid var(--border);
+    background: var(--surface);
+    box-shadow: 9px 9px 0 var(--shadow);
+    font-family: var(--mono);
+  }
+  .jbc-panel > summary {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    cursor: pointer;
+    font-size: .72rem;
+    letter-spacing: .04em;
+    color: var(--muted);
+    user-select: none;
+  }
+  .jbc-panel > summary:hover { color: var(--ink); }
+  .jbc-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: var(--accent);
+    color: var(--on-accent);
+    border: 2px solid var(--border);
+    font-weight: 700;
+    letter-spacing: .12em;
+  }
+  .jbc-body { border-top: 3px solid var(--border); padding: 14px 16px 18px; }
+  .jbc-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    font-size: .7rem;
+    color: var(--ink);
+    margin-bottom: 12px;
+  }
+  .jbc-stats b { color: var(--accent); }
+  .jbc-disassembly {
+    max-height: 320px;
+    overflow: auto;
+    margin: 0;
+    padding: 12px;
+    border: 2px solid var(--border);
+    background: var(--bg);
+    color: var(--ink);
+    font-size: .62rem;
+    line-height: 1.5;
+    white-space: pre;
+  }
+
   /* ---------- Toast ---------- */
   .toast {
     position: fixed;
@@ -736,6 +789,20 @@
      应用挂载点
      ============================================================ -->
 <div id="app"></div>
+
+<!-- ============================================================
+     JBC 字节码检查器：展示本页面 JLC 源码编译出的字节码模块
+     ============================================================ -->
+<details class="jbc-panel" id="jbc-panel">
+  <summary>
+    <span class="jbc-badge">JBC</span>
+    <span>本页面已编译为 JLC 字节码 · 点击查看指令集</span>
+  </summary>
+  <div class="jbc-body">
+    <div class="jbc-stats" id="jbc-stats"></div>
+    <pre class="jbc-disassembly" id="jbc-disassembly"></pre>
+  </div>
+</details>
 
 <!-- ============================================================
      JLC 源码 —— 整个界面与交互逻辑全部由本语言书写
@@ -1070,9 +1137,9 @@ app Base64Studio {
       }
 
       footer(class = "footer") {
-        span { text "纯前端 · 零依赖 · 无 eval · CSP 友好" }
+        span { text "源码 → JLC 字节码 → 栈式 VM · 零依赖 · 无 eval · CSP 友好" }
         span(class = "dot") { text "•" }
-        span { text "JLC " + kernelVersion }
+        span { text "JLC-VM " + kernelVersion }
       }
 
       when (toast != "") {
@@ -1091,7 +1158,7 @@ app Base64Studio {
      宿主层：装载 JLC 内核，注入显式 capability
      ============================================================ -->
 <script type="module">
-import JLC from "./jlc.js";
+import JLC, { OP_SPEC } from "./jlc.js";
 
 /* ------------------------------------------------------------
    1. 主题初始化（读取 head 内联脚本已写入的值）
@@ -1226,6 +1293,48 @@ function dismissBoot() {
 
 try {
   const program = JLC.compile(sourceNode.textContent, { sourceName: "base64-studio.jlc" });
+
+  /* JBC 字节码检查器：编译产物 → 序列化 → 指令统计 → 反汇编 */
+  (() => {
+    const panel = document.getElementById("jbc-panel");
+    if (!panel) return;
+    const module = program.module;
+    const bytes = program.serialize();
+    const histogram = new Map();
+    for (const func of module.functions) {
+      for (const byte of func.code) {
+        const name = OP_SPEC?.[byte]?.name;
+        if (name) histogram.set(name, (histogram.get(name) ?? 0) + 1);
+      }
+    }
+    const top = [...histogram.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10)
+      .map(([name, count]) => `${name}×${count}`).join(" · ");
+    const sourceChars = sourceNode.textContent.length;
+    const stats = document.getElementById("jbc-stats");
+    if (stats) {
+      stats.innerHTML = "";
+      const items = [
+        ["源码", `${sourceChars} 字符`],
+        ["字节码", `${bytes.length} 字节 (${Math.round((1 - bytes.length / sourceChars) * 100)}%↓)`],
+        ["魔数", [...bytes.slice(0, 4)].map((b) => b.toString(16).padStart(2, "0")).join(" ")],
+        ["函数", String(module.functions.length)],
+        ["常量池", String(module.pool.length)],
+        ["全局引用", String(module.globalRefs.length)],
+        ["高频指令", top || "—"],
+      ];
+      for (const [label, value] of items) {
+        const item = document.createElement("span");
+        const strong = document.createElement("b");
+        strong.textContent = `${label} `;
+        item.appendChild(strong);
+        item.appendChild(document.createTextNode(value));
+        stats.appendChild(item);
+      }
+    }
+    const disassembly = document.getElementById("jbc-disassembly");
+    if (disassembly) disassembly.textContent = program.disassemble();
+    window.__jlcBytecode = { module, bytes };
+  })();
 
   const handle = program.mount(appRoot, {
     state: {
