@@ -1,0 +1,40 @@
+{
+  "name": "@tyu/jlc-kernel",
+  "version": "0.1.0",
+  "description": "JLC: a dependency-free, lifecycle-safe translation kernel for browser interfaces",
+  "type": "module",
+  "main": "./jlc.js",
+  "module": "./jlc.js",
+  "types": "./jlc.d.ts",
+  "exports": {
+    ".": {
+      "types": "./jlc.d.ts",
+      "import": "./jlc.js",
+      "default": "./jlc.js"
+    }
+  },
+  "files": [
+    "jlc.js",
+    "jlc.d.ts",
+    "README.md",
+    "SPEC.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check jlc.js && node --test"
+  },
+  "keywords": [
+    "jlc",
+    "language",
+    "frontend",
+    "reactive",
+    "dom",
+    "kernel"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  }
+}
