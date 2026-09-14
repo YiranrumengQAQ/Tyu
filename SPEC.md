@@ -1,16 +1,26 @@
-# JLC 0.1 Language and Kernel Specification
+# JLC 0.2 Language and Kernel Specification
 
 本文件描述 `jlc.js` 当前实现的可执行语义。关键字区分大小写，源文件使用 Unicode；标识符可以使用中文等 Unicode 字母。
 
 ## 1. 翻译阶段
 
-1. **Tokenize**：去除空白、`//` 行注释和 `/* … */` 块注释，保留 token 的行、列和 offset。
-2. **Parse**：Pratt 表达式解析器和递归下降声明/视图解析器生成 AST。
-3. **Freeze**：公开 AST 递归冻结，挂载之间不能被篡改。
-4. **Install**：建立无原型数据环境、state/derive/action/resource binding 和资源根作用域。
-5. **Translate**：AST 直接解释为 DOM 与细粒度 effect；没有 JavaScript 源码生成。
+JLC 采用“编译器前端 + 字节码虚拟机”的两段式架构（详见 [JBC.md](./JBC.md)）：
 
-语法错误是带 `sourceName:line:column` 的 `JLCCompileError`；执行错误是 `JLCRuntimeError`。
+```text
+JLC source → Tokenizer → Parser → 优化器 → Code Generator → 字节码模块（.jbc）
+                                                                  │
+        jlc-vm.js：Verifier → Linker → 栈式调度循环 → 响应式 DOM ←┘
+```
+
+1. **Tokenize**：去除空白、`//` 行注释和 `/* … */` 块注释，保留 token 的行、列和 offset。
+2. **Parse**：Pratt 表达式解析器和递归下降声明/视图解析器生成 AST，公开前递归冻结。
+3. **Optimize**：编译期常量折叠（纯字面量运算、字面量条件的分支裁剪）与死代码消除（无副作用的纯表达式语句、不可达语句、恒真 `when`）。
+4. **Generate**：AST 扁平化为字节码——表达式/语句/视图片段成为函数表条目，字符串与常量进入常量池，名字进入全局引用表；随后立即通过字节码验证器。
+5. **Verify**：载入/挂载期静态检查（指令白名单、操作数边界、跳转目标、栈深度一致性、元素游标配平）；失败抛 `JLCVerifyError`。
+6. **Link**：mount 期建立全局槽表（内建 → `$route` → capabilities → 声明），把模块全局引用解析为槽号。
+7. **Execute**：栈式调度循环执行字节码；DOM 指令创建元素/文本/when/each 结构并注册细粒度 effect。没有 `eval`、`new Function` 或 JavaScript 源码生成。
+
+语法/验证错误是带 `sourceName:line:column` 的 `JLCCompileError` 或 `JLCVerifyError`；执行错误是 `JLCRuntimeError`。`jlc.js` 是全量门面（编译器 + VM）；仅部署运行时使用 `jlc-vm.js` + `.jbc` 文件，它不包含 Tokenizer 与 Parser。
 
 ## 2. 词法
 
@@ -261,3 +271,21 @@ Signal 写入把订阅 effect 加入去重队列并安排 microtask。优先级�
 2. resource、style、DOM 和结构 effect。
 
 flush 持续执行到队列为空；超过 1000 轮判定为响应循环。事件、`handle.set` 和 `handle.call` 自动 batch；测试或必须立即读取 DOM 时可调用 `handle.flush()`。
+
+## 12. 字节码执行语义补充
+
+以下语义由字节码层精确规定（完整指令集见 [JBC.md](./JBC.md)）：
+
+- **局部变量**：action 的参数与 `let`、`for` 变量存放在帧槽中。重复 `let`、给
+  `for/each` 变量或只读状态赋值在编译期即报错；槽位寻址支持沿帧链引用外层
+  片段变量（嵌套 `each`）。
+- **定时器捕获**：`after`/`every` 在执行到 `TIMER` 指令的瞬间对整条帧链做槽位
+  快照；定时器体读取到的是创建时刻的局部变量值。全局 state 始终共享读写。
+- **步数预算**：除跳转、`NOP`/`POP`/`DUP`、`RETURN_NULL` 外每条指令计 1 步，
+  默认上限 100000（`maxSteps` 可调）；`for`/`each` 项目数仍受 `maxLoop` 约束。
+- **action 调用**：`CALL` 对模块内 action 压入新帧（深度上限 100），对内建与
+  capability 直接调用。参数默认值是独立表达式函数，可见此前参数与全局。
+- **视图结构 pass**：view 函数在 mount 时线性执行一次；响应式部分（text、
+  属性、bind、when、each）以函数索引注册为 effect，依赖变化时由 VM 重放
+  对应函数，而不是重建结构。
+- **常量属性**：字面量属性在编译期折叠为 `ATTR_STATIC`，不产生 effect。
