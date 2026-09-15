@@ -1,0 +1,87 @@
+/** @jlc-page
+ * title: 待办清单
+ * summary: state / derive / each key / 不可变重建的最小样本，只用内核内建函数
+ * policy: strict
+ * isolation: soft
+ * capabilities:
+ * demo: 新增、勾选、删除都只重跑受影响的那一行；列表节点靠 key 复用，不会整表重建
+ */
+app TodoLab {
+  state draft = "";
+  state items = [{ id: 1, text: "读 SPEC.md", done: true }, { id: 2, text: "写完 0.3 的策略层", done: false }];
+  state done = 1;
+  state nextId = 3;
+
+  derive left = len(items) - done;
+  derive heading = "待办 " + left + " / " + len(items) + " 项";
+
+  action add() {
+    let text = trim(draft);
+    if (text == "") { return null; }
+    items = append(items, { id: nextId, text: text, done: false });
+    nextId += 1;
+    draft = "";
+    return null;
+  }
+
+  action toggle(id) {
+    let next = [];
+    let count = 0;
+    for (item, index in items) {
+      let flag = item.id == id ? !item.done : item.done;
+      if (flag) { count += 1; }
+      next = append(next, { id: item.id, text: item.text, done: flag });
+    }
+    items = next;
+    done = count;
+    return null;
+  }
+
+  action remove(id) {
+    let next = [];
+    let count = done;
+    for (item, index in items) {
+      if (item.id != id) {
+        next = append(next, item);
+      } else if (item.done) {
+        count -= 1;
+      }
+    }
+    items = next;
+    done = count;
+    return null;
+  }
+
+  style `
+    .todo { display: grid; gap: 12px; }
+    .todo-add { display: flex; gap: 8px; }
+    .todo-add input { flex: 1; padding: 8px 10px; border: 2px solid var(--border); background: var(--field); color: var(--ink); font: inherit; }
+    .todo-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .todo-row { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 2px solid var(--border); background: var(--surface); }
+    .todo-row span { flex: 1; }
+    .done { opacity: .45; }
+    .done span { text-decoration: line-through; }
+  `;
+
+  view {
+    main(class = "todo") {
+      h2 { text heading; }
+      form(class = "todo-add", on:submit.prevent = { add(); }) {
+        input(placeholder = "再添一件事…", bind:value = draft, aria:label = "新待办");
+        button(type = "submit") { text "加入"; }
+      }
+      ul(class = "todo-list") {
+        each (item, index in items key item.id) {
+          li(class = "todo-row", class:done = item.done) {
+            input(type = "checkbox", checked = item.done, on:change = { toggle(item.id); }, aria:label = "完成");
+            span { text item.text; }
+            button(on:click = { remove(item.id); }, aria:label = "删除") { text "×"; }
+          }
+        } else {
+          li(class = "empty") { text "全部完成 🎉"; }
+        }
+      }
+      p(class = "muted") { text "剩余 " + left + " 项 · 列表长度 " + len(items); }
+    }
+  }
+}

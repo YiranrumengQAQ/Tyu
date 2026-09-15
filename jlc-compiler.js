@@ -10,6 +10,8 @@
 import {
   JLCCompileError,
   JLCVerifyError,
+  resolvePolicy,
+  checkPermissions,
   deepFreeze,
   verifyModule,
   encodeModule,
@@ -19,6 +21,7 @@ import {
   OP_SPEC,
   NO_FUNC,
   BLOCKED_TAGS,
+  HARD_BLOCKED_TAGS,
   BLOCKED_PROPERTIES,
   URL_ATTRIBUTES,
   EVENT_MODIFIERS,
@@ -27,6 +30,7 @@ import {
   BLOCKED_KEYS,
   FUNCTION_KIND,
   VERSION,
+  BYTECODE_VERSION,
 } from "./jlc-vm.js";
 
 export { JLCCompileError, JLCVerifyError };
@@ -964,8 +968,9 @@ class FuncBuilder {
 }
 
 class Codegen {
-  constructor(sourceName) {
+  constructor(sourceName, policy = null) {
     this.sourceName = sourceName;
+    this.policy = policy;
     this.pool = [];
     this.poolKeys = new Map();
     this.globalRefs = [];
@@ -1331,8 +1336,12 @@ class Codegen {
           break;
         }
         case "ElementNode": {
-          if (BLOCKED_TAGS.has(node.tag.toLowerCase())) {
-            this.error(`安全模式禁止创建 <${node.tag}>`, node.loc);
+          // 0.3：编译器只保留「任何策略档都不允许」的硬限制；
+          // 其余（iframe / 自定义元素 / data: …）进接口清单，由装载期策略裁决。
+          if (HARD_BLOCKED_TAGS.has(node.tag.toLowerCase())) {
+            this.error(`禁止创建 <${node.tag}>：硬限制，任何策略档都不允许`, node.loc);
+          } else if (this.policy && node.tag.toLowerCase() === "iframe" && !this.policy.allowSandboxedFrames) {
+            this.error(`策略 ${this.policy.profile} 未授予 <iframe>（frame:iframe）`, node.loc);
           }
           builder.op(OP.ELEM);
           builder.u16(this.constant(node.tag));
@@ -1408,8 +1417,14 @@ class Codegen {
     const literalValue = attribute.value?.type === "Literal" && attribute.value.type === "Literal" ? attribute.value : null;
 
     if (name.startsWith("on:")) {
-      const specification = name.slice(3);
+      let specification = name.slice(3);
+      let windowTarget = false;
+      if (specification.startsWith("window:")) {
+        windowTarget = true;
+        specification = specification.slice(7);
+      }
       const [type, ...modifiers] = specification.split(".");
+      if (windowTarget) modifiers.push("window");
       if (!type) this.error("事件名不能为空", attribute.loc);
       let mask = 0;
       for (const modifier of modifiers) {
@@ -1485,8 +1500,11 @@ class Codegen {
       const property = name.slice(5);
       const normalized = property.toLowerCase();
       if (BLOCKED_KEYS.has(property)) this.error(`禁止访问字段“${property}”`, attribute.loc);
-      if (BLOCKED_PROPERTIES.has(normalized) || normalized.startsWith("on")) {
-        this.error(`安全模式禁止设置 DOM property“${property}”`, attribute.loc);
+      if (BLOCKED_PROPERTIES.has(normalized)) {
+        this.error(`禁止设置 DOM property“${property}”：HTML 解析类 property 永禁，请改用沙箱 frame（iframe + srcdoc）`, attribute.loc);
+      }
+      if (normalized.startsWith("on") && this.policy?.allowEventAttributes !== true) {
+        this.error(`策略 ${this.policy?.profile ?? "strict"} 禁止 prop:${property}（property 级事件属性）`, attribute.loc);
       }
       const funcIndex = this.exprFunction(attribute.value, `prop:${property}`, scope);
       builder.op(OP.PROP_SET);
@@ -1500,8 +1518,8 @@ class Codegen {
     if (resolved.startsWith("attr:")) resolved = resolved.slice(5).replaceAll(":", "-");
     else if (resolved.startsWith("data:")) resolved = `data-${resolved.slice(5).replaceAll(":", "-")}`;
     else if (resolved.startsWith("aria:")) resolved = `aria-${resolved.slice(5).replaceAll(":", "-")}`;
-    if (/^on/iu.test(resolved)) {
-      this.error(`禁止直接设置事件属性“${resolved}”，请使用 on:${resolved.slice(2)}`, attribute.loc);
+    if (/^on/iu.test(resolved) && this.policy?.allowEventAttributes !== true) {
+      this.error(`策略 ${this.policy?.profile ?? "strict"} 禁止直接设置事件属性“${resolved}”，请使用 on:${resolved.slice(2)}`, attribute.loc);
     }
     // 常量属性在编译期折叠为 ATTR_STATIC（零运行时开销）。
     if (attribute.value?.type === "Literal") {
@@ -1581,7 +1599,7 @@ class Codegen {
     this.constant(program.name); // app 名进入常量池（.jbc 元数据段要求）
     return {
       format: "jlc-bytecode",
-      version: 1,
+      version: BYTECODE_VERSION,
       app: program.name,
       sourceName: this.sourceName,
       pool: this.pool,
@@ -1601,9 +1619,24 @@ export function compileAst(source, options = {}) {
   if (options.optimize !== false) {
     ast = deepFreeze(optimizeProgram(ast)); // 优化后的 AST 重新冻结
   }
-  const gen = new Codegen(sourceName);
+  // 构建期可选预检：传入 policy 时，编译器用与 VM 完全相同的裁决函数提前报错。
+  const policy = options.policy ? resolvePolicy(options.policy) : null;
+  const policyMode = options.policyMode ?? "gate";
+  // gate = 逐点报错（带行列号）；manifest = 不打断编译，最后汇总清单；defer = 完全交给装载期。
+  const gen = new Codegen(sourceName, policyMode === "gate" ? policy : null);
   const module = gen.compileProgram(ast);
   verifyModule(module, sourceName);
+  if (policy && policyMode !== "defer") {
+    const denials = checkPermissions(module.requirements ?? [], policy);
+    if (denials.length) {
+      throw new JLCCompileError(
+        `按策略 ${policy.profile} 预检失败，${sourceName} 需要未授予的接口：` +
+        denials.map((item) => `${item.kind}:${item.detail}（${item.reason}）`).join("；"),
+        null,
+        sourceName,
+      );
+    }
+  }
   module.verified = true;
   return { module, ast, sourceName };
 }

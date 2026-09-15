@@ -13,19 +13,82 @@ JLC 源码 → Tokenizer → Parser → 优化器 → Code Generator ──→ .
             jlc-vm.js：Verifier → Linker → 栈式 VM 调度循环 → DOM / Effects
 ```
 
-> 当前版本：`0.2.0`，零运行时依赖，ES Module，可直接在现代浏览器运行。
+> 当前版本：`0.3.0`，零运行时依赖，ES Module，可直接在现代浏览器运行。
+>
+> 0.3 把「安全」从散落的黑名单变成一个可管理的**策略层**：三档 profile、静态接口清单
+> （`.jbc` v2 的 MANIFEST 段）、`stop / degrade / report` 三档 fault、实例隔离域与配额。
+> 仓库里的[多页游乐场](./web/index.html)把每一层都做成了可现场拨动的开关。
+
+## 策略层：一次声明，三处生效
+
+策略对象（`resolvePolicy`）是编译期预检、装载期裁决与写入期把关的**同一份**数据：
+
+```js
+// 装载：档位 + 覆盖项 + fault 档 + 隔离域
+const app = JLCVM.mount(module, "#app", {
+  policy: { profile: "open", allowDataUrls: false, capabilityAllowlist: ["clipboard"] },
+  fault: "degrade",        // stop | degrade | report
+  isolation: "strict",     // 实例只能碰自己那块 DOM
+  maxTotalSteps: 200_000,  // 实例累计指令预算
+  onFault: (info) => console.warn("[policy]", info),
+});
+
+app.permissions();          // 逐条 granted / reason
+app.describe();             // 策略 + 清单 + 用量（管理台直接渲染）
+app.inspect();              // cycles / denials / neutralized / peakStack …
+JLCVM.demountAll();         // 一次性卸掉在册实例
+```
+
+三档 profile 的差别只在「允不允许碰宿主接口」，语法与字节码完全相同：`strict` 与 0.2
+行为等价（无 frame、无 `data:`、无窗口事件、无 HTML 注入）；`open` 全部放开但每一项都带
+内核加固（frame 的 `sandbox` 由内核托管、`srcdoc` 走 `iframe.srcdoc` 而永不走
+`innerHTML`、`style` 被前缀限定到本实例）；`trusted` 留给第一方字节码。
+
+被拒的接口如何表现由 `fault` 决定：`stop` 在渲染第一个节点之前整体抛 `JLCPolicyError`；
+`degrade` 把它换成 `<jlc-denied>` 占位、跳过对应副作用并记账；`report` 照常运行只记录。
+`innerHTML`、`javascript:` URL、`<script>` 这类**硬限制**不属于策略：无论哪一档、
+哪个 fault 档，编译期就失败。完整表格见 [SPEC.md §10](./SPEC.md#10-安全边界策略隔离域与-fault-档)。
+
+构建期还能只要一份「这个应用会用到哪些宿主接口」的清单：
+
+```js
+const program = JLC.compile(source, { policy: "strict", policyMode: "manifest" });
+program.module.requirements;             // [{ kind: "frame", detail: "iframe", key: "frame:iframe", sites: [...] }]
+JLC.checkPolicy(program, "open");        // []（open 档授予 frame）
+```
+
+`policyMode: "gate"` 让编译期直接按策略拒绝（发布管道用），`"defer"` 把裁决整个交给运行期
+（fault 档才有意义）。`.jbc` v2 的 MANIFEST 段镜像这份清单，但权威版本由验证器从指令流
+重算——改写清单既拿不到权限，也藏不住接口。
+
+## 多页游乐场（`web/`）
+
+```bash
+npm run build:web   # 编译 web/apps/*.jlc → 自包含沙箱页 + 注册表 + 浏览器可用的运行时
+npm run serve       # 零依赖静态服务器（带 COOP/COEP，crossOriginIsolated 可用）
+```
+
+打开 `http://localhost:8080/`：控制台把 5 个演示应用各装进一个
+`sandbox="allow-scripts"` 的 iframe（opaque origin，无同源特权），每个页面内联自己的
+`.jbc`、只加载**不含编译器**的运行时。左侧的 profile / fault / isolation / 配额开关通过
+`postMessage` 让沙箱页原地重挂载，右边实时显示 `ledger()`、被授予与被收回的接口，以及一份
+**在沙箱内部跑的隔离自检**（试探 `parent.document`、`localStorage`、`cookie`、`top.location`）。
+「编译台」演示部署形态的反面：只有控制台（同源、有编译器）能编译源码，产出的字节码注入
+给沙箱页——沙箱页自始至终没有 `Tokenizer`/`Parser`，`JLCVM.compile()` 直接抛错。
+`npm run check` 会重新编译全部应用并与页面里的字节码逐字节比对，防止产物漂移。
 
 ## 两段式架构：编译一次，任意 VM 运行
 
 编译（前端）与运行（后端）彻底解耦：
 
-| 文件 | 角色 | 源码 | min+gzip* |
+| 文件 | 角色 | 源码 | gzip |
 | --- | --- | --- | --- |
-| `jlc.js` | 全量门面：编译器前端 + VM（开发用） | 5 KB | ~2 KB |
-| `jlc-vm.js` | **仅运行时**：字节码验证器、链接器、调度循环、响应式核心 | 106 KB | ~24 KB |
-| `jlc-compiler.js` | 仅编译器：Tokenizer + Parser + 优化器 + 代码生成 | 60 KB | ~13 KB |
+| `jlc.js` | 全量门面：编译器前端 + VM（开发用） | 6.4 KB | 2.3 KB |
+| `jlc-vm.js` | **仅运行时**：验证器、链接器、调度循环、响应式核心、策略层 | 158 KB | 41 KB |
+| `jlc-compiler.js` | 仅编译器：Tokenizer + Parser + 优化器 + 代码生成 | 62 KB | 14 KB |
 
-\* 由粗粒度压缩脚本测得（去注释空白 + gzip -9），量级供参考。
+\* `gzip -9` 实测（含注释）。仅运行时部署时策略层已经算在 `jlc-vm.js` 里，
+不需要额外负担；编译期预检用的 `policy` 选项不产生任何运行期代码。
 
 生产部署可以只携带 `jlc-vm.js` 与 `.jbc` 文件——运行时**不包含 Tokenizer 与 Parser**，
 接触不到 JLC 源码文本；源码 → 字节码的转化发生在构建期，产物是确定性二进制
@@ -180,7 +243,9 @@ timer、请求与样式；事件绑定 `AbortController`；resource 重跑先 ab
 ```ts
 JLC.tokenize(source, { sourceName? })            // 词法分析
 JLC.parse(source, { sourceName? })               // 语法分析（冻结 AST）
-JLC.compile(source, { sourceName?, optimize? })  // 编译 → 已验证字节码程序
+JLC.compile(source, { sourceName?, optimize?, policy?, policyMode? })  // 编译 → 已验证字节码 + 接口清单
+JLC.checkPolicy(program, "strict")               // 构建期预检：返回被拒接口清单
+JLC.policies()                                   // 三档 profile 的解析结果（管理台数据源）
 program.serialize()                              // → .jbc (Uint8Array)
 program.disassemble()                            // → 汇编文本
 JLC.load(bytes) / loadModule(bytes)              // .jbc → 模块（验证）
@@ -202,18 +267,33 @@ createVMKernel(options?)                         // 仅运行时内核（jlc-vm.
 | `maxSteps` | 单次执行指令预算，默认 `100000` |
 | `maxLoop` | 单次列表/循环上限，默认 `10000` |
 | `onError` | 运行期错误处理器 |
+| `policy` | 策略档（`"strict"` 默认）或 `{ profile, …覆盖项 }` |
+| `fault` | 违反策略时：`stop`（默认）/ `degrade` / `report` |
+| `isolation` / `realmRoot` | 实例隔离域（`strict` 时越界 DOM 抛 `JLCIsolationError`） |
+| `maxTotalSteps` | 实例累计指令预算（0 = 不限） |
+| `onFault` | 每次裁决回调：`deny` / `skip` / `ignore` / `neutralize` / `quota` |
+| `id` | 实例标识（默认自增 `jlc-N`），也是样式作用域前缀 |
 
 ## 开发
 
 ```bash
-npm test
-npm run check
+npm test           # 57 个用例：语言、VM、策略层、游乐场产物
+npm run check      # 语法检查 + 游乐场产物漂移 + 全量测试
+npm run build:web  # 重新生成 web/（沙箱页、运行时经典脚本、注册表）
+npm run serve      # 本地起游乐场（带 COOP/COEP）
 ```
 
 测试覆盖原有全部行为（解析错误、响应式派生、事件、双向绑定、条件分支、keyed 列表复用、
 不可变嵌套赋值、URL/原型链防护、timer 销毁、请求取消、路由、capability 边界），以及新的
 VM 套件：字节码结构与反汇编、`.jbc` 往返序列化、验证器对篡改字节码的拒绝、纯 VM 内核
 挂载、base64 `text/jbc` 引导、常量折叠与死代码消除、编译期安全检查、步数/循环限制。
+
+0.3 的 `test/policy.test.js` 覆盖策略层：档位与指纹、覆盖项与未知字段拒绝、
+`SYSCALLS` 映射、静态接口清单（含 MANIFEST 伪造与往返）、硬限制与策略拒绝的分界、
+三档 fault 的行为差异、URL 中和、frame 托管 `sandbox`、样式作用域、DOM/样式/HTML 配额、
+隔离域越界与自动 dispose、窗口事件授权、capability 白名单、`ledger()` 计数归零。
+`test/web.test.js` 则直接消费 `web/` 产物：用仅运行时的经典脚本挂载页面内联的字节码、
+校验每个沙箱页里的 `.jbc` 与源文件重新编译逐字节相同、确认 VM 内核确实无法编译源码。
 
 ## License
 

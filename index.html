@@ -4,8 +4,8 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <meta name="theme-color" content="#ffd60a" />
-<meta name="description" content="BASE64 STUDIO — 由 JLC 0.2 字节码内核驱动的纯前端 Base64 工作台" />
-<title>BASE64 STUDIO · JLC 0.2</title>
+<meta name="description" content="BASE64 STUDIO — 由 JLC 0.3 字节码内核驱动的纯前端 Base64 工作台；策略层与隔离域在 web/ 游乐场里可以现场拨动" />
+<title>BASE64 STUDIO · JLC 0.3</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23ffd60a'/%3E%3Cpath d='M9 23 16 9l7 14' fill='none' stroke='%23101014' stroke-width='3'/%3E%3C/svg%3E" />
 
 <style>
@@ -284,6 +284,7 @@
   }
 
   .topbar-right { display: flex; align-items: center; gap: 12px; }
+  .topbar-right a.btn { text-decoration: none; }
 
   .badge {
     padding: 6px 12px;
@@ -997,7 +998,7 @@
       <svg class="icon icon--lg" aria-hidden="true"><use href="#i-zap"/></svg>
     </div>
     <h2 class="boot-title">Base64 Studio</h2>
-    <p class="boot-sub">jlc bytecode vm · v0.2.0</p>
+    <p class="boot-sub">jlc bytecode vm · v0.3.0 · 策略层 + 隔离域</p>
     <div class="boot-track"><i></i></div>
     <p class="boot-steps">
       <span>tokenize</span>
@@ -1050,6 +1051,7 @@ app Base64Studio {
   state seq = 0;
   state clock = "";
   state stats = kernelStats();
+  state policyInfo = kernelPolicy();
   state sampleIndex = 0;
   state outputWrap = true;
 
@@ -1070,7 +1072,7 @@ app Base64Studio {
   derive toastIcon = toastKind == "error" ? "#i-alert" : "#i-check";
   derive outputClass = "output" + (outputWrap ? "" : " output--nowrap");
   derive routePath = $route.path + ($route.query.mode ? "?mode=" + $route.query.mode : "");
-  derive kernelVersion = "0.2.0";
+  derive kernelVersion = "0.3.0";
   derive demoStatus = demo.loading ? "loading" : (demo.error != null ? "error" : "ready");
 
   resource demo = http(demoEndpoint(), { as: "json" });
@@ -1117,7 +1119,7 @@ app Base64Studio {
     let samples = [
       "JLC 内核 · Base64 工作台 —— 纯前端，零依赖，无 eval。",
       "The quick brown fox jumps over the lazy dog.",
-      "{\"name\":\"JLC\",\"version\":\"0.2.0\",\"vm\":\"bytecode\"}",
+      "{\"name\":\"JLC\",\"version\":\"0.3.0\",\"vm\":\"bytecode\",\"abi\":2}",
       "Unicode 安全：中文 · emoji 🚀 · 数学 ∑∫√ · 日文 こんにちは"
     ];
     input = get(samples, sampleIndex, "");
@@ -1151,7 +1153,7 @@ app Base64Studio {
         notify("已复制 " + string(outputChars) + " 字符", "ok");
         title("已复制 · BASE64 STUDIO");
         after (1800) {
-          title("BASE64 STUDIO · JLC 0.2");
+          title("BASE64 STUDIO · JLC 0.3");
         }
       } else {
         notify("复制失败，请手动选择", "error");
@@ -1224,6 +1226,7 @@ app Base64Studio {
   action startTicker() {
     clock = currentTime();
     stats = kernelStats();
+    policyInfo = kernelPolicy();
     every (1000) {
       clock = currentTime();
       stats = kernelStats();
@@ -1246,6 +1249,9 @@ app Base64Studio {
           }
         }
         div(class = "topbar-right") {
+          a(class = "btn btn--ghost btn--sm", href = "./web/index.html", target = "_blank", rel = "noreferrer", title = "0.3 新增：策略层、隔离域与 fault 档的可交互游乐场") {
+            text "游乐场";
+          }
           span(class = "badge", style:background = accent) {
             text string(outputChars) + " B";
           }
@@ -1403,7 +1409,7 @@ app Base64Studio {
               svg(class = "icon") { use(href = "#i-cpu"); }
               span { text "内核资源"; }
             }
-            span(class = "counter") { text "live inspect()" }
+            span(class = "counter") { text "live ledger()" }
           }
           div(class = "metrics") {
             div(class = "metric") {
@@ -1426,9 +1432,26 @@ app Base64Studio {
               span(class = "metric-label") { text "requests"; }
               span(class = "metric-value") { text stats.requests; }
             }
+            div(class = "metric") {
+              span(class = "metric-label") { text "cycles"; }
+              span(class = "metric-value") { text stats.cycles; }
+            }
+            div(class = "metric") {
+              span(class = "metric-label") { text "styles"; }
+              span(class = "metric-value") { text stats.styles; }
+            }
+            div(class = "metric") {
+              span(class = "metric-label") { text "denials"; }
+              span(class = "metric-value") { text stats.denials; }
+            }
+            div(class = "metric") {
+              span(class = "metric-label") { text "neutralized"; }
+              span(class = "metric-value") { text stats.neutralized; }
+            }
           }
           footer(class = "panel-foot") {
-            span(class = "counter") { text "unmount() 后全部归零" }
+            span(class = "counter") { text "unmount() 后资源计数归零，cycles / denials 保留" }
+            span(class = "counter") { text "策略 " + policyInfo.profile + " · " + policyInfo.fingerprint + " · fault " + policyInfo.fault + " · " + policyInfo.isolation; }
           }
         }
 
@@ -1649,7 +1672,7 @@ function fallbackCopy(text) {
 /* resource 自检数据：离线可用、瞬时完成、必定成功 */
 const DEMO_PAYLOAD = JSON.stringify({
   kernel: "JLC",
-  version: "0.2.0",
+  version: "0.3.0",
   pipeline: ["tokenize", "parse", "optimize", "codegen", "verify", "link", "execute"],
   sandbox: { eval: false, innerHTML: false, prototypeAccess: false },
   reactive: { signal: true, effect: true, scope: true, scheduler: "microtask" }
@@ -1696,10 +1719,10 @@ const capabilities = {
     return `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
   },
 
-  /* 内核指标：把 handle.inspect() 暴露给 JLC 状态图 */
+  /* 内核指标：把 handle.inspect()（0.3 起即 runtime.ledger()）暴露给 JLC 状态图 */
   kernelStats: () => {
     if (!appHandle) {
-      return { scopes: 0, effects: 0, listeners: 0, timers: 0, requests: 0 };
+      return { scopes: 0, effects: 0, listeners: 0, timers: 0, requests: 0, cycles: 0, denials: 0, neutralized: 0, styles: 0 };
     }
     const m = appHandle.inspect();
     return {
@@ -1707,7 +1730,26 @@ const capabilities = {
       effects: m.effects,
       listeners: m.listeners,
       timers: m.timers,
-      requests: m.requests
+      requests: m.requests,
+      cycles: m.cycles,
+      denials: m.denials,
+      neutralized: m.neutralized,
+      styles: m.styles
+    };
+  },
+
+  /* 策略面板：本页应用以哪个档位运行（0.3 新增） */
+  kernelPolicy: () => {
+    if (!appHandle) {
+      return { profile: "—", fingerprint: "—", fault: "—", isolation: "—", scopeId: "—" };
+    }
+    const p = appHandle.describe().policy;
+    return {
+      profile: p.profile,
+      fingerprint: p.fingerprint,
+      fault: p.faultMode,
+      isolation: p.isolation,
+      scopeId: p.scopeId ?? "—"
     };
   },
 
@@ -1762,11 +1804,19 @@ try {
 
   /* --- 阶段 4：VM 挂载（Linker → 栈式调度循环 → DOM） --- */
   const handle = JLCVM.mount(module, appRoot, {
+    /* 0.3：策略层。本页面是自己的第一方字节码，仍按 strict 档跑——
+       它与 0.2 行为等价，用来证明「放开语言 ≠ 放松边界」这件事不需要换档也能成立。
+       想看 degrade / report 的差别，去 web/ 游乐场：那里每个应用都能现场切档。 */
+    policy: "strict",
+    fault: "degrade",
+    isolation: "soft",
+    maxTotalSteps: 0,
     state: {
       theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light",
-      kernelVersion: JLC.version ?? "0.2.0"
+      kernelVersion: JLC.version ?? "0.3.0"
     },
     capabilities,
+    onFault: (info) => console.warn("[JLC policy]", info),
     onError: (error) => {
       console.error("[JLC]", error);
     }

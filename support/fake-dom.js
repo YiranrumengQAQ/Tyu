@@ -117,6 +117,13 @@ export class FakeNode {
     this.parentNode?.removeChild(this);
   }
 
+  contains(node) {
+    for (let current = node ?? null; current; current = current.parentNode) {
+      if (current === this) return true;
+    }
+    return false;
+  }
+
   get textContent() {
     if (this.nodeType === 3) return this.data;
     if (this.nodeType === 8) return "";

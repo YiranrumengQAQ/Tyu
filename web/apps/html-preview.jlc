@@ -1,0 +1,69 @@
+/** @jlc-page
+ * title: 富文本预览（iframe + srcdoc）
+ * summary: 不可信 HTML 的官方去处：srcdoc + 内核托管 sandbox；strict 下 frame 被整体收回
+ * policy: open
+ * isolation: strict
+ * capabilities: clipboard
+ * demo: 左边输入 HTML，右边在 frame 里渲染（150ms 防抖）。把 fault 切到 stop 看预检失败清单；切到 strict 看 frame 被收回后应用如何降级
+ */
+app HtmlPreview {
+  state source = "<h1>你好，沙箱</h1>\n<style>body{font:16px/1.6 system-ui;margin:14px;color:#0b0d12}h1{font-size:20px}</style>\n<p>这里的 <code>&lt;script&gt;</code> 会执行，但它是 opaque origin：读不到宿主 DOM，也拿不到宿主的 localStorage。</p>\n<button onclick=\"document.getElementById('n').textContent = String(Number(document.getElementById('n').textContent) + 1)\">iframe 里的按钮：点我计数</button>\n<p>计数 <span id='n'>0</span></p>";
+  state staged = "";
+  state pending = 0;
+  state copied = "";
+
+  derive html = "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>" + source + "</body></html>";
+  derive bytes = len(source);
+  derive previewing = pending > 0;
+
+  action stage(value) {
+    staged = value;
+    pending = 1;
+    after (150) { publish(); }
+    return null;
+  }
+
+  action publish() {
+    source = staged;
+    pending = 0;
+    return null;
+  }
+
+  action copySource() {
+    clipboard("copy", html);
+    copied = "已复制 " + bytes + " 字节";
+    return null;
+  }
+
+  style `
+    .html-preview { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+    .html-preview textarea {
+      width: 100%; min-height: 320px; resize: vertical; padding: 12px;
+      border: 2px solid var(--border); background: var(--code-bg); color: var(--code-ink);
+      font: 500 12px / 1.65 ui-monospace, monospace;
+    }
+    .html-preview iframe { width: 100%; min-height: 320px; border: 2px solid var(--ink); background: white; box-shadow: 5px 5px 0 var(--acc-2); }
+    .html-side { display: grid; gap: 10px; align-content: start; }
+    .html-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  `;
+
+  view {
+    main(class = "html-preview") {
+      div(class = "html-side") {
+        div(class = "html-bar") {
+          strong { text "输入 HTML"; }
+          span(class = "muted") { text bytes + " 字节"; }
+          when (previewing) { span(class = "badge badge--warn") { text "等待防抖…"; } }
+        }
+        textarea(bind:value = staged, on:input = { stage($event.target.value); }, spellcheck = false, aria:label = "HTML 源码", rows = 14);
+        div(class = "html-bar") {
+          button(on:click = { stage(source); }) { text "重新渲染"; }
+          button(on:click = { copySource(); }) { text "复制完整文档"; }
+          when (copied != "") { span(class = "badge") { text copied; } }
+        }
+        p(class = "muted") { text "sandbox 由内核托管：iframe 只拿到策略里的 allow-scripts allow-forms allow-popups，页面上写 sandbox 也不会被采纳。"; }
+      }
+      iframe(srcdoc = html, title = "不可信 HTML 预览");
+    }
+  }
+}
