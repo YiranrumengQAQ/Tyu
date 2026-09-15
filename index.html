@@ -1154,7 +1154,7 @@ app RomanceStudio {
           i { svg(class = "icon icon--lg", aria:hidden = "true") { use(href = "#i-heart-fill"); } }
         }
         h2(class = "boot-title") { text "心语笺"; }
-        p(class = "boot-sub") { text "正在为你翻开一页温柔" }
+        p(class = "boot-sub") { text "正在为你翻开一页温柔"; }
         div(class = "boot-track") { i }
       }
     }
@@ -1168,7 +1168,7 @@ app RomanceStudio {
           }
           div(class = "brand-text") {
             h1(class = "brand-title") { text "心语笺"; }
-            p(class = "brand-sub") { text "纸短情长 · 一字一句" }
+            p(class = "brand-sub") { text "纸短情长 · 一字一句"; }
           }
         }
         div(class = "topbar-actions") {
@@ -1340,7 +1340,7 @@ app RomanceStudio {
             svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart-fill"); }
             span { text "心选"; }
           }
-          span(class = "panel-count") { text string(favCount) + " 句" }
+          span(class = "panel-count") { text string(favCount) + " 句"; }
         }
         when (favCount > 0) {
           ul(class = "list") {
@@ -1375,7 +1375,7 @@ app RomanceStudio {
         } else {
           div(class = "empty") {
             svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-inbox"); }
-            span { text "还没有收藏的句子 · 遇见喜欢的，点一下爱心" }
+            span { text "还没有收藏的句子 · 遇见喜欢的，点一下爱心"; }
           }
         }
       }
@@ -1388,9 +1388,9 @@ app RomanceStudio {
           }
           span(class = "panel-count") {
             when (todayHasCheckin) {
-              text "已打卡 · 共 " + string(checkinCount) + " 天"
+              text "已打卡 · 共 " + string(checkinCount) + " 天";
             } else {
-              text "还没打卡"
+              text "还没打卡";
             }
           }
         }
@@ -1420,7 +1420,7 @@ app RomanceStudio {
             svg(class = "icon", aria:hidden = "true") { use(href = "#i-note"); }
             span { text "我的私语"; }
           }
-          span(class = "panel-count") { text string(noteCount) + " 条" }
+          span(class = "panel-count") { text string(noteCount) + " 条"; }
         }
         when (noteCount > 0) {
           ul(class = "list") {
@@ -1430,7 +1430,7 @@ app RomanceStudio {
                   p(class = "list-text") { text n.text; }
                   span(class = "list-by") {
                     svg(class = "icon", aria:hidden = "true") { use(href = "#i-quote"); }
-                    span { text "关联第 " + string(n.id) + " 句" }
+                    span { text "关联第 " + string(n.id) + " 句"; }
                   }
                 }
                 div(class = "list-tools") {
@@ -1449,21 +1449,21 @@ app RomanceStudio {
         } else {
           div(class = "empty") {
             svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-note"); }
-            span { text "还没有写下私语 · 点「笔」为喜欢的句子记一句" }
+            span { text "还没有写下私语 · 点「笔」为喜欢的句子记一句"; }
           }
         }
       }
 
       footer(class = "footer") {
-        span { text "第 " + string(quoteNumber) + " 句 / 共 " + string(quoteTotal) + " 句" }
-        span(class = "dot") { text "·" }
-        span { text "已阅 " + string(visited) + " 句" }
-        span(class = "dot") { text "·" }
-        span { text "心选 " + string(favCount) }
-        span(class = "dot") { text "·" }
-        span { text "私语 " + string(noteCount) }
-        span(class = "dot") { text "·" }
-        span { text "打卡 " + string(checkinCount) + " 天" }
+        span { text "第 " + string(quoteNumber) + " 句 / 共 " + string(quoteTotal) + " 句"; }
+        span(class = "dot") { text "·"; }
+        span { text "已阅 " + string(visited) + " 句"; }
+        span(class = "dot") { text "·"; }
+        span { text "心选 " + string(favCount); }
+        span(class = "dot") { text "·"; }
+        span { text "私语 " + string(noteCount); }
+        span(class = "dot") { text "·"; }
+        span { text "打卡 " + string(checkinCount) + " 天"; }
       }
 
     }
@@ -1474,7 +1474,7 @@ app RomanceStudio {
       header(class = "drawer-head") {
         h3(class = "panel-title") {
           svg(class = "icon", aria:hidden = "true") { use(href = "#i-menu"); }
-          span { text "收藏与足迹" }
+          span { text "收藏与足迹"; }
         }
         button(class = "btn btn--sm btn--icon", title = "关闭", aria:label = "关闭抽屉",
                on:click = { closeDrawer(); }) {
@@ -1524,7 +1524,7 @@ app RomanceStudio {
           } else {
             div(class = "empty") {
               svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-inbox"); }
-              span { text "心选还是空的" }
+              span { text "心选还是空的"; }
             }
           }
         }
@@ -1537,7 +1537,7 @@ app RomanceStudio {
                     p(class = "list-text") { text n.text; }
                     span(class = "list-by") {
                       svg(class = "icon", aria:hidden = "true") { use(href = "#i-quote"); }
-                      span { text "第 " + string(n.id) + " 句" }
+                      span { text "第 " + string(n.id) + " 句"; }
                     }
                   }
                   div(class = "list-tools") {
@@ -1552,7 +1552,7 @@ app RomanceStudio {
           } else {
             div(class = "empty") {
               svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-note"); }
-              span { text "还没有私语" }
+              span { text "还没有私语"; }
             }
           }
         }
@@ -1568,7 +1568,7 @@ app RomanceStudio {
                     }
                     span(class = "list-by") {
                       svg(class = "icon", aria:hidden = "true") { use(href = "#i-clock"); }
-                      span { text "第 " + string(h.id + 1) + " 句" }
+                      span { text "第 " + string(h.id + 1) + " 句"; }
                     }
                   }
                   div(class = "list-tools") {
@@ -1583,7 +1583,7 @@ app RomanceStudio {
           } else {
             div(class = "empty") {
               svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-clock"); }
-              span { text "还没有足迹" }
+              span { text "还没有足迹"; }
             }
           }
         }
@@ -1596,7 +1596,7 @@ app RomanceStudio {
                 }
                 span(class = "list-by") {
                   svg(class = "icon", aria:hidden = "true") { use(href = "#i-feather"); }
-                  span { text "关于这个页面" }
+                  span { text "关于这个页面"; }
                 }
               }
             }
@@ -1607,7 +1607,7 @@ app RomanceStudio {
                 }
                 span(class = "list-by") {
                   svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart-fill"); }
-                  span { text "本地保存" }
+                  span { text "本地保存"; }
                 }
               }
             }
@@ -1618,7 +1618,7 @@ app RomanceStudio {
                 }
                 span(class = "list-by") {
                   svg(class = "icon", aria:hidden = "true") { use(href = "#i-sparkle"); }
-                  span { text "隐私承诺" }
+                  span { text "隐私承诺"; }
                 }
               }
             }
@@ -1633,7 +1633,7 @@ app RomanceStudio {
           header(class = "modal-head") {
             h2(class = "modal-title") {
               svg(class = "icon", aria:hidden = "true") { use(href = "#i-note"); }
-              span { text "写一句私语" }
+              span { text "写一句私语"; }
             }
             button(class = "btn btn--sm btn--icon", title = "关闭", aria:label = "关闭",
                    on:click = { closeModal(); }) {
@@ -1651,7 +1651,7 @@ app RomanceStudio {
           div(class = "modal-field") {
             span(class = "modal-field-label") {
               svg(class = "icon icon--sm", aria:hidden = "true") { use(href = "#i-quill"); }
-              span { text "私语" }
+              span { text "私语"; }
             }
             textarea(class = "modal-textarea", bind:value = noteDraft,
                      placeholder = "写点什么…");
