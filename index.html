@@ -1,0 +1,2201 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#efe7f6" />
+<meta name="description" content="心语笺 —— 在字里行间，遇见一句温柔的话。" />
+<title>心语笺 · 温柔语录</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23ff8fab'/%3E%3Cpath d='M16 23c-5-3.2-7.5-6-7.5-9.2A4.3 4.3 0 0 1 16 11a4.3 4.3 0 0 1 7.5 2.8C23.5 17 21 19.8 16 23z' fill='%23fff'/%3E%3C/svg%3E" />
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem("romance-theme-name");
+      if (saved) document.documentElement.dataset.bootTheme = saved;
+    } catch (e) { /* 隐私模式 */ }
+  })();
+</script>
+</head>
+<body>
+<div id="app"></div>
+
+<script type="text/jlc" id="jlc-source">
+app RomanceStudio {
+
+  // ============================================================
+  // 状态
+  // ============================================================
+  state booting = true;
+  state themeName = "晨光";
+  state fontSize = 1;
+
+  state quotes = [
+    { id: 1,  text: "你是我藏在心里的春天，每次想起，都会开花。", author: "佚名", category: "心动" },
+    { id: 2,  text: "世间所有的相遇，都是久别重逢。", author: "白落梅", category: "相遇" },
+    { id: 3,  text: "我想和你一起，看日出日落，看细水长流。", author: "佚名", category: "陪伴" },
+    { id: 4,  text: "你不用完美，你只要是你，就足够让我心动。", author: "佚名", category: "心动" },
+    { id: 5,  text: "我把星星摘下来给你，你说不如我眼里的光。", author: "佚名", category: "心动" },
+    { id: 6,  text: "风起了，我在想你；风停了，我还在想你。", author: "佚名", category: "思念" },
+    { id: 7,  text: "遇见你之后，我才知道，原来日子可以这么甜。", author: "佚名", category: "相遇" },
+    { id: 8,  text: "我想要的很简单，时光还在，你还在。", author: "佚名", category: "陪伴" },
+    { id: 9,  text: "你笑起来的样子，是我见过最好的风景。", author: "佚名", category: "心动" },
+    { id: 10, text: "如果思念有声音，你一定会被吵醒。", author: "佚名", category: "思念" },
+    { id: 11, text: "愿我如星君如月，夜夜流光相皎洁。", author: "范成大", category: "思念" },
+    { id: 12, text: "山有木兮木有枝，心悦君兮君不知。", author: "越人歌", category: "思念" },
+    { id: 13, text: "往后余生，风雪是你，平淡是你，清贫也是你。", author: "佚名", category: "陪伴" },
+    { id: 14, text: "愿所有的后会有期，都是他日的别来无恙。", author: "佚名", category: "陪伴" },
+    { id: 15, text: "我们绕了这么一圈才遇到，我比谁都更明白你的重要。", author: "佚名", category: "相遇" }
+  ];
+
+  state themes = [
+    { id: "晨光", accent: "#ff8fab", bg: "#efe7f6", light: "#ffffff", dark: "#e0d3ee", inset: "#f4ecfa", ink: "#2c2438", ink2: "#4a3f5c", muted: "#8d80a3", hair: "rgba(120,92,150,.12)", shadow: "rgba(176,152,202,.42)", highlight: "rgba(255,255,255,.96)", shade: "rgba(120,92,150,.13)", darkMode: false, glow1: "#ff8fab", glow2: "#b8a4ff", glow3: "#6fd4c0" },
+    { id: "夜色", accent: "#b8a4ff", bg: "#1a1622", light: "#332b42", dark: "#17121f", inset: "#1e1929", ink: "#f3eefb", ink2: "#cfc4e2", muted: "#938aa8", hair: "rgba(255,255,255,.07)", shadow: "rgba(0,0,0,.55)", highlight: "rgba(255,255,255,.055)", shade: "rgba(0,0,0,.35)", darkMode: true, glow1: "#b8a4ff", glow2: "#ff8fab", glow3: "#7aa7f0" },
+    { id: "樱花", accent: "#ff5c8a", bg: "#fff0f4", light: "#ffffff", dark: "#fce2ea", inset: "#fff5f8", ink: "#3a1f2b", ink2: "#5c3a48", muted: "#a17f8c", hair: "rgba(200,92,130,.14)", shadow: "rgba(220,150,175,.42)", highlight: "rgba(255,255,255,.97)", shade: "rgba(180,80,120,.12)", darkMode: false, glow1: "#ff5c8a", glow2: "#ffb8d0", glow3: "#ffd8a0" },
+    { id: "海盐", accent: "#3bb8a6", bg: "#e6f5f2", light: "#ffffff", dark: "#d2ece6", inset: "#eefaf7", ink: "#193230", ink2: "#2f504c", muted: "#6a9290", hair: "rgba(60,150,140,.14)", shadow: "rgba(120,190,180,.42)", highlight: "rgba(255,255,255,.96)", shade: "rgba(80,150,140,.12)", darkMode: false, glow1: "#3bb8a6", glow2: "#7aa7f0", glow3: "#ffd8a0" },
+    { id: "暮色", accent: "#ff8a5c", bg: "#fdf0e6", light: "#ffffff", dark: "#f6dfd0", inset: "#fff6ef", ink: "#3a2418", ink2: "#5c3a28", muted: "#a08068", hair: "rgba(180,110,70,.14)", shadow: "rgba(220,160,120,.42)", highlight: "rgba(255,255,255,.97)", shade: "rgba(180,110,70,.12)", darkMode: false, glow1: "#ff8a5c", glow2: "#ffc27a", glow3: "#ff5c8a" },
+    { id: "星河", accent: "#7aa7f0", bg: "#eaf0fd", light: "#ffffff", dark: "#d8e2f8", inset: "#f2f6fd", ink: "#1e2a4a", ink2: "#3a4a6b", muted: "#7183a8", hair: "rgba(90,120,200,.14)", shadow: "rgba(140,170,230,.42)", highlight: "rgba(255,255,255,.96)", shade: "rgba(90,120,200,.12)", darkMode: false, glow1: "#7aa7f0", glow2: "#b8a4ff", glow3: "#6fd4c0" }
+  ];
+
+  state iconPaths = [
+    { id: "i-heart",        paths: ["M20.8 6.6a5.2 5.2 0 0 0-8.8-2.1A5.2 5.2 0 0 0 3.2 6.6c0 4.5 5.2 8 8.8 11.4 3.6-3.4 8.8-6.9 8.8-11.4z"] },
+    { id: "i-heart-fill",   paths: ["M20.8 6.6a5.2 5.2 0 0 0-8.8-2.1A5.2 5.2 0 0 0 3.2 6.6c0 4.5 5.2 8 8.8 11.4 3.6-3.4 8.8-6.9 8.8-11.4z"] },
+    { id: "i-quote",        paths: ["M9.5 5.5C6.5 5.5 4 8 4 11v6a1.5 1.5 0 0 0 1.5 1.5h4A1.5 1.5 0 0 0 11 17v-4a1.5 1.5 0 0 0-1.5-1.5H8c0-1.9 1.1-3 2.4-3.4a.75.75 0 0 0-.4-1.45z", "M19 5.5c-3 0-5.5 2.5-5.5 5.5v6A1.5 1.5 0 0 0 15 18.5h4A1.5 1.5 0 0 0 20.5 17v-4A1.5 1.5 0 0 0 19 11.5h-1.5c0-1.9 1.1-3 2.4-3.4A.75.75 0 0 0 19 5.5z"] },
+    { id: "i-quill",        paths: ["M4 20c0-6 4-10 10-11", "M20 3.5c-3.5 1-6.5 3-8.5 6.5", "M20 3.5c1.5 6-2 11-8 12.5", "m9 16-3 4"] },
+    { id: "i-copy",         paths: ["M11.5 8.5h7a3 3 0 0 1 3 3v7a3 3 0 0 1-3 3h-7a3 3 0 0 1-3-3v-7a3 3 0 0 1 3-3z", "M4.5 16A2.5 2.5 0 0 1 2 13.5v-9A2.5 2.5 0 0 1 4.5 2h9A2.5 2.5 0 0 1 16 4.5"] },
+    { id: "i-check",        paths: ["M20 6 9 17l-5-5"] },
+    { id: "i-sun",          paths: ["M7.8 12a4.2 4.2 0 1 0 8.4 0a4.2 4.2 0 1 0-8.4 0", "M12 2v2.4", "M12 19.6V22", "m4.6 4.6 1.7 1.7", "m17.7 17.7 1.7 1.7", "M2 12h2.4", "M19.6 12H22", "m6.3 17.7-1.7 1.7", "m19.4 4.6-1.7 1.7"] },
+    { id: "i-moon",         paths: ["M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"] },
+    { id: "i-shuffle",      paths: ["M16 3h5v5", "M4 20 21 3", "M21 16v5h-5", "m15 15 6 6", "M4 4l5 5"] },
+    { id: "i-left",         paths: ["m15 18-6-6 6-6"] },
+    { id: "i-right",        paths: ["m9 18 6-6-6-6"] },
+    { id: "i-clock",        paths: ["M2.8 12a9.2 9.2 0 1 0 18.4 0a9.2 9.2 0 1 0-18.4 0", "M12 6.6V12l3.6 2"] },
+    { id: "i-petal",        paths: ["M12 3c4 3.5 6.5 6.6 6.5 10a6.5 6.5 0 0 1-13 0C5.5 9.6 8 6.5 12 3z"] },
+    { id: "i-inbox",        paths: ["M22 12h-5.4l-1.6 2.6h-6L7.4 12H2", "M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"] },
+    { id: "i-alert",        paths: ["m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z", "M12 9v4.4", "M12 17h.01"] },
+    { id: "i-x",            paths: ["M18 6 6 18", "m6 6 12 12"] },
+    { id: "i-upload",       paths: ["M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4", "m17 8-5-5-5 5", "M12 3v12"] },
+    { id: "i-feather",      paths: ["M20.2 3.8a5.5 5.5 0 0 0-7.8 0L4 12.2V20h7.8l8.4-8.4a5.5 5.5 0 0 0 0-7.8z", "M16 8 6.5 17.5", "M14.5 5.5 5 15"] },
+    { id: "i-search",       paths: ["M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14z", "m20 20-4-4"] },
+    { id: "i-star",         paths: ["M12 3.5 14.4 9l5.6.4-4.3 3.7 1.4 5.5L12 15.6 6.9 18.6l1.4-5.5L4 9.4 9.6 9z"] },
+    { id: "i-note",         paths: ["M5 3h11l4 4v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z", "M15 3v5h5", "M8 12h8", "M8 16h6"] },
+    { id: "i-calendar",     paths: ["M4 6a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z", "M4 10h16", "M9 3v4", "M15 3v4"] },
+    { id: "i-menu",         paths: ["M4 7h16", "M4 12h16", "M4 17h16"] },
+    { id: "i-type",         paths: ["M4 7V5h16v2", "M9 20h6", "M12 5v15"] },
+    { id: "i-palette",      paths: ["M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-.5-.2-.9-.5-1.2-.3-.3-.5-.7-.5-1.1 0-.9.7-1.6 1.6-1.6H16a5 5 0 0 0 5-5c0-4-4-7.4-9-7.4z", "M7.5 11.5h.01", "M11 8h.01", "M15.5 11h.01"] },
+    { id: "i-sparkle",      paths: ["M12 3.5 13.6 9 19 10.6 13.6 12.2 12 17.7 10.4 12.2 5 10.6 10.4 9z", "M19 16v3", "M17.5 17.5h3"] }
+  ];
+
+  state petals = [
+    { id: 1, left: 6,  size: 15, duration: 22, delay: -2 },
+    { id: 2, left: 19, size: 22, duration: 27, delay: -9 },
+    { id: 3, left: 33, size: 12, duration: 19, delay: -14 },
+    { id: 4, left: 47, size: 19, duration: 31, delay: -5 },
+    { id: 5, left: 62, size: 14, duration: 24, delay: -18 },
+    { id: 6, left: 76, size: 21, duration: 29, delay: -11 },
+    { id: 7, left: 89, size: 13, duration: 21, delay: -21 }
+  ];
+
+  state stars = [
+    { id: 1, left: 8,  top: 12, size: 3, delay: 0 },
+    { id: 2, left: 22, top: 28, size: 2, delay: 1.2 },
+    { id: 3, left: 38, top: 8,  size: 3, delay: 2.4 },
+    { id: 4, left: 55, top: 22, size: 2, delay: 0.6 },
+    { id: 5, left: 72, top: 14, size: 3, delay: 1.8 },
+    { id: 6, left: 88, top: 32, size: 2, delay: 3.0 },
+    { id: 7, left: 15, top: 55, size: 2, delay: 2.1 },
+    { id: 8, left: 46, top: 62, size: 3, delay: 0.9 },
+    { id: 9, left: 78, top: 58, size: 2, delay: 2.7 },
+    { id: 10, left: 92, top: 78, size: 2, delay: 1.5 }
+  ];
+
+  state moods = [
+    { id: "sunny",  label: "晴朗", color: "#ffb84d" },
+    { id: "cloudy", label: "多云", color: "#8d80a3" },
+    { id: "rainy",  label: "细雨", color: "#7aa7f0" },
+    { id: "starry", label: "星夜", color: "#b8a4ff" },
+    { id: "peachy", label: "心动", color: "#ff8fab" },
+    { id: "calm",   label: "平静", color: "#6fd4c0" }
+  ];
+
+  state currentIndex = 0;
+  state activeCategory = "全部";
+  state searchQuery = "";
+  state favorites = [];
+  state notes = [];
+  state checkins = [];
+  state historyLog = [];
+  state typedChars = 0;
+  state typing = false;
+  state typingToken = 0;
+  state toast = "";
+  state toastKind = "info";
+  state clock = "";
+  state greeting = "";
+  state dateLabel = "";
+  state activeModal = null;
+  state noteDraft = "";
+  state noteTargetId = 0;
+  state todayMood = "";
+  state visited = 1;
+  state drawerOpen = false;
+  state drawerTab = "fav";
+  state heartSeq = 0;
+  state hearts = [];
+  state ready = false;
+
+  // ============================================================
+  // 派生
+  // ============================================================
+  derive categories = ["全部", "心动", "相遇", "陪伴", "思念"];
+
+  derive currentTheme = pickTheme(themes, themeName);
+  derive accent = get(currentTheme, "accent", "#ff8fab");
+  derive isDark = get(currentTheme, "darkMode", false);
+
+  derive currentQuote = get(quotes, currentIndex, {
+    id: 0,
+    text: "点击下方按钮，遇见一句温柔的话。",
+    author: "心语笺",
+    category: "全部"
+  });
+
+  derive total = max(1, len(currentQuote.text));
+  derive displayText = slice(currentQuote.text, 0, typedChars);
+  derive progress = clamp(round(typedChars * 100 / total), 0, 100);
+  derive isFav = hasId(favorites, currentQuote.id);
+  derive favCount = len(favorites);
+  derive noteCount = len(notes);
+  derive checkinCount = len(checkins);
+  derive quoteNumber = currentIndex + 1;
+  derive quoteTotal = len(quotes);
+  derive fontSizeLabel = fontSize == 1 ? "标准" : (fontSize == 2 ? "放大" : "特大");
+  derive scaledSize = fontSize == 1 ? "1.9rem" : (fontSize == 2 ? "2.3rem" : "2.7rem");
+  derive toastIcon = toastKind == "error" ? "#i-alert" : (toastKind == "ok" ? "#i-check" : "#i-heart-fill");
+  derive hasSearch = len(searchQuery) > 0;
+  derive dailyIndex = floor(now() / 86400000) % len(quotes);
+  derive dailyQuote = get(quotes, dailyIndex, currentQuote);
+  derive todayHasCheckin = hasCheckinToday(checkins);
+
+  // ============================================================
+  // 样式 · 静态黏土基础
+  // ============================================================
+  style `
+    *, *::before, *::after { box-sizing: border-box; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100dvh;
+      font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+      font-size: 15px;
+      line-height: 1.7;
+      color: var(--ink);
+      background-color: var(--bg);
+      background-image:
+        radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--glow1) 24%, transparent), transparent 44%),
+        radial-gradient(circle at 88% 14%, color-mix(in srgb, var(--glow2) 26%, transparent), transparent 46%),
+        radial-gradient(circle at 50% 96%, color-mix(in srgb, var(--glow3) 22%, transparent), transparent 48%);
+      background-attachment: fixed;
+      overflow-x: hidden;
+      transition: background-color .55s ease, color .55s ease;
+    }
+    button, input, textarea, select { font-family: inherit; color: inherit; }
+    ::selection { background: var(--accent); color: var(--accent-ink); }
+    button { -webkit-tap-highlight-color: transparent; }
+    a { color: inherit; }
+
+    .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+    .icon {
+      width: 22px; height: 22px;
+      flex: 0 0 auto;
+      display: block;
+      fill: none;
+      stroke: currentColor;
+      stroke-width: 1.9;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .icon--sm { width: 17px; height: 17px; }
+    .icon--lg { width: 30px; height: 30px; }
+    .icon--xl { width: 46px; height: 46px; }
+    .icon--fill { fill: currentColor; stroke: none; }
+
+    /* 花瓣 */
+    .petals { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+    .petal {
+      position: absolute; top: -8vh; opacity: .5; color: var(--accent);
+      animation-name: drift; animation-timing-function: linear; animation-iteration-count: infinite;
+      will-change: transform;
+    }
+    .petal svg { width: 100%; height: 100%; display: block; fill: currentColor; }
+    @keyframes drift {
+      0%   { transform: translate3d(0, -8vh, 0) rotate(0deg); opacity: 0; }
+      10%  { opacity: .5; }
+      90%  { opacity: .45; }
+      100% { transform: translate3d(6vw, 110vh, 0) rotate(320deg); opacity: 0; }
+    }
+
+    /* 星空 */
+    .stars { position: fixed; inset: 0; pointer-events: none; z-index: 0; opacity: 0; transition: opacity .8s ease; }
+    .stars--on { opacity: .9; }
+    .star {
+      position: absolute; border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 0 6px rgba(255,255,255,.75), 0 0 12px rgba(184,164,255,.5);
+      animation: twinkle 4s ease-in-out infinite;
+    }
+    @keyframes twinkle {
+      0%, 100% { opacity: .25; transform: scale(.8); }
+      50%      { opacity: 1;   transform: scale(1.15); }
+    }
+
+    /* 漂浮的心 */
+    .hearts { position: fixed; inset: 0; pointer-events: none; z-index: 70; overflow: hidden; }
+    .burst {
+      position: absolute; bottom: 20vh; width: 26px; height: 26px;
+      color: #ff5c8a;
+      animation: rise 1.8s var(--ease-clay) forwards;
+    }
+    .burst svg { width: 100%; height: 100%; display: block; fill: currentColor; }
+    @keyframes rise {
+      0%   { opacity: 0; transform: translateY(0) scale(.5) rotate(0deg); }
+      15%  { opacity: 1; transform: translateY(-10vh) scale(1.1) rotate(-6deg); }
+      100% { opacity: 0; transform: translateY(-70vh) scale(.9) rotate(20deg); }
+    }
+
+    /* 开场加载 */
+    .boot {
+      position: fixed; inset: 0; z-index: 999;
+      display: grid; place-items: center; padding: 24px;
+      background-color: var(--bg);
+      background-image:
+        radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--glow1) 22%, transparent), transparent 50%),
+        radial-gradient(circle at 70% 70%, color-mix(in srgb, var(--glow2) 24%, transparent), transparent 50%);
+      transition: opacity .7s ease, visibility .7s ease;
+    }
+    .boot--done { opacity: 0; visibility: hidden; pointer-events: none; }
+    .boot-card {
+      padding: 46px 52px 40px; text-align: center;
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      border-radius: 40px;
+      box-shadow:
+        16px 16px 40px var(--shadow), -12px -12px 32px var(--highlight),
+        inset -4px -4px 12px var(--shade), inset 4px 4px 12px var(--highlight);
+      animation: bootIn .7s var(--ease-clay) both;
+    }
+    @keyframes bootIn {
+      from { opacity: 0; transform: translateY(26px) scale(.94); }
+      to   { opacity: 1; transform: none; }
+    }
+    .boot-hearts { display: flex; justify-content: center; gap: 14px; margin-bottom: 26px; }
+    .boot-hearts i {
+      display: grid; place-items: center; width: 46px; height: 46px; color: #fff;
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      border-radius: 16px;
+      box-shadow:
+        6px 6px 14px var(--shadow), -5px -5px 12px var(--highlight),
+        inset -2px -2px 6px var(--shade);
+      animation: heartbeat 1.5s var(--ease-clay) infinite;
+    }
+    .boot-hearts i:nth-child(1) { color: #ff8fab; animation-delay: 0s; }
+    .boot-hearts i:nth-child(2) { color: #b8a4ff; animation-delay: .16s; }
+    .boot-hearts i:nth-child(3) { color: #6fd4c0; animation-delay: .32s; }
+    @keyframes heartbeat {
+      0%, 100% { transform: translateY(0) scale(1); }
+      35%      { transform: translateY(-9px) scale(1.09); }
+    }
+    .boot-title {
+      margin: 0 0 8px;
+      font-family: var(--serif); font-size: 1.5rem; font-weight: 700; letter-spacing: .22em;
+    }
+    .boot-sub { margin: 0 0 28px; font-size: .82rem; letter-spacing: .1em; color: var(--muted); }
+    .boot-track {
+      width: min(260px, 62vw); height: 12px; margin: 0 auto;
+      background: var(--inset); border-radius: 999px;
+      box-shadow: inset 3px 3px 7px var(--shade), inset -3px -3px 7px var(--highlight);
+      overflow: hidden;
+    }
+    .boot-track i {
+      display: block; height: 100%; width: 0; border-radius: 999px;
+      background: linear-gradient(90deg, var(--glow1), var(--glow2), var(--glow3));
+      animation: bootFill 1.5s cubic-bezier(.5, 0, .25, 1) forwards;
+    }
+    @keyframes bootFill { to { width: 100%; } }
+
+    /* 骨架 */
+    .page {
+      position: relative; z-index: 1;
+      max-width: 960px; margin: 0 auto;
+      padding: clamp(18px, 3vw, 40px) clamp(14px, 3vw, 28px) clamp(40px, 6vw, 80px);
+      display: flex; flex-direction: column; gap: clamp(16px, 2.4vw, 26px);
+      animation: pageIn .8s var(--ease-clay) both;
+    }
+    @keyframes pageIn {
+      from { opacity: 0; transform: translateY(22px); }
+      to   { opacity: 1; transform: none; }
+    }
+
+    /* 顶栏 */
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;
+      padding: 14px 18px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        12px 12px 30px var(--shadow), -10px -10px 26px var(--highlight),
+        inset -3px -3px 9px var(--shade), inset 3px 3px 9px var(--highlight);
+    }
+    .brand { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .brand-mark {
+      display: grid; place-items: center; width: 52px; height: 52px; flex: 0 0 auto;
+      color: #fff;
+      background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 74%, #fff), var(--accent));
+      border-radius: 18px;
+      box-shadow:
+        6px 6px 16px color-mix(in srgb, var(--accent) 42%, transparent),
+        -5px -5px 13px var(--highlight),
+        inset -2px -2px 7px rgba(0,0,0,.14), inset 2px 2px 7px rgba(255,255,255,.42);
+      transform: rotate(-5deg);
+      transition: transform .5s var(--ease-clay);
+    }
+    .topbar:hover .brand-mark { transform: rotate(5deg) scale(1.05); }
+    .brand-text { min-width: 0; }
+    .brand-title {
+      margin: 0; font-family: var(--serif); font-size: 1.2rem; font-weight: 700; letter-spacing: .16em;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .brand-sub {
+      margin: 2px 0 0; font-size: .7rem; letter-spacing: .1em; color: var(--muted);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .topbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+    .badge {
+      display: inline-flex; align-items: center; gap: 7px; padding: 8px 14px;
+      font-size: .7rem; font-weight: 700; letter-spacing: .1em; color: #fff;
+      background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 74%, #fff), var(--accent));
+      border-radius: 999px;
+      box-shadow:
+        5px 5px 13px color-mix(in srgb, var(--accent) 38%, transparent),
+        -4px -4px 11px var(--highlight),
+        inset -2px -2px 6px rgba(0,0,0,.13), inset 2px 2px 6px rgba(255,255,255,.38);
+      white-space: nowrap;
+    }
+    .badge .icon { width: 14px; height: 14px; }
+
+    /* 问候条 */
+    .greeting-strip {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      padding: 14px 20px;
+      border-radius: var(--radius-md);
+      background: var(--inset);
+      box-shadow: inset 5px 5px 12px var(--shade), inset -5px -5px 12px var(--highlight);
+    }
+    .greeting-text { display: flex; align-items: center; gap: 10px; }
+    .greeting-text .icon { color: var(--accent); }
+    .greeting-main { font-family: var(--serif); font-size: 1.05rem; font-weight: 700; letter-spacing: .1em; }
+    .greeting-date { margin-left: 4px; font-size: .76rem; letter-spacing: .08em; color: var(--muted); }
+    .greeting-clock {
+      display: inline-flex; align-items: center; gap: 7px; padding: 5px 13px;
+      font-family: var(--mono); font-size: .78rem; letter-spacing: .08em; color: var(--ink2);
+      background: var(--light); border-radius: 999px;
+      box-shadow:
+        3px 3px 8px var(--shadow), -3px -3px 8px var(--highlight),
+        inset -1px -1px 4px var(--shade), inset 1px 1px 4px var(--highlight);
+    }
+    .greeting-clock .icon { width: 14px; height: 14px; color: var(--accent); }
+
+    /* 主卡 */
+    .stage {
+      position: relative; overflow: hidden;
+      padding: clamp(28px, 5vw, 52px) clamp(22px, 5vw, 54px) clamp(24px, 4vw, 42px);
+      border-radius: 40px;
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        18px 18px 44px var(--shadow), -14px -14px 36px var(--highlight),
+        inset -4px -4px 13px var(--shade), inset 4px 4px 13px var(--highlight);
+    }
+    .stage-glow {
+      position: absolute; inset: -30% -20% auto -20%; height: 70%;
+      border-radius: 50%;
+      background: radial-gradient(circle, color-mix(in srgb, var(--accent) 34%, transparent), transparent 68%);
+      filter: blur(38px); pointer-events: none;
+      transition: background .7s ease;
+    }
+    .stage-quote-mark {
+      position: relative; display: block; width: 46px; height: 46px; margin-bottom: 18px;
+      color: color-mix(in srgb, var(--accent) 82%, transparent);
+      transition: color .6s ease;
+    }
+    .stage-body { position: relative; }
+    .quote-line {
+      margin: 0;
+      font-family: var(--serif);
+      font-weight: 600;
+      line-height: 1.65;
+      letter-spacing: .04em;
+      color: var(--ink);
+      min-height: 1.65em;
+      word-break: break-word;
+      text-wrap: pretty;
+      cursor: pointer;
+      transition: font-size .25s ease;
+    }
+    .caret {
+      display: inline-block; width: 3px; height: 1em; margin-left: 4px;
+      vertical-align: -.12em; border-radius: 2px;
+      background: var(--accent);
+      animation: blink 1s steps(2, start) infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+
+    .quote-meta {
+      display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+      margin-top: 24px; padding-top: 20px;
+      border-top: 2px dashed var(--hair);
+    }
+    .quote-author {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: .84rem; font-weight: 700; letter-spacing: .1em; color: var(--ink2);
+    }
+    .quote-author .icon { width: 15px; height: 15px; color: var(--accent); }
+    .quote-cat {
+      display: inline-flex; align-items: center; gap: 5px; padding: 5px 13px;
+      font-size: .68rem; font-weight: 700; letter-spacing: .1em; color: #fff;
+      background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent));
+      border-radius: 999px;
+      box-shadow:
+        4px 4px 10px color-mix(in srgb, var(--accent) 34%, transparent),
+        inset -2px -2px 5px rgba(0,0,0,.12), inset 2px 2px 5px rgba(255,255,255,.34);
+    }
+    .quote-index {
+      margin-left: auto;
+      font-family: var(--mono); font-size: .68rem; letter-spacing: .1em; color: var(--muted);
+    }
+    .progress-track {
+      position: relative; height: 9px; margin-top: 20px; border-radius: 999px;
+      background: var(--inset);
+      box-shadow: inset 3px 3px 7px var(--shade), inset -3px -3px 7px var(--highlight);
+      overflow: hidden;
+    }
+    .progress-fill {
+      display: block; height: 100%; border-radius: 999px;
+      background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 60%, #fff), var(--accent));
+      transition: width .12s linear, background .6s ease;
+    }
+
+    /* 操作条 */
+    .actions {
+      display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 12px;
+      padding: 18px 20px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        12px 12px 30px var(--shadow), -10px -10px 26px var(--highlight),
+        inset -3px -3px 9px var(--shade), inset 3px 3px 9px var(--highlight);
+    }
+
+    .btn {
+      position: relative;
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      padding: 13px 22px;
+      font-size: .78rem; font-weight: 700; letter-spacing: .06em;
+      color: var(--ink2);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      border: none; border-radius: var(--radius-md);
+      cursor: pointer; user-select: none; white-space: nowrap;
+      box-shadow:
+        7px 7px 16px var(--shadow), -6px -6px 14px var(--highlight),
+        inset -2px -2px 6px var(--shade), inset 2px 2px 6px var(--highlight);
+      transition: box-shadow .16s var(--ease-clay), transform .16s var(--ease-clay), color .2s ease;
+    }
+    .btn:hover:not(:disabled) { color: var(--ink); transform: translateY(-2px); }
+    .btn:active:not(:disabled) {
+      transform: translateY(1px);
+      box-shadow: inset 6px 6px 13px var(--shade), inset -6px -6px 13px var(--highlight);
+    }
+    .btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+    .btn:disabled { opacity: .42; cursor: not-allowed; }
+    .btn--accent {
+      color: #fff;
+      background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 78%, #fff), var(--accent));
+      box-shadow:
+        7px 7px 18px color-mix(in srgb, var(--accent) 42%, transparent),
+        -6px -6px 16px var(--highlight),
+        inset -2px -2px 7px rgba(0,0,0,.12), inset 2px 2px 7px rgba(255,255,255,.45);
+    }
+    .btn--accent:active:not(:disabled) {
+      box-shadow: inset 6px 6px 13px rgba(0,0,0,.18), inset -5px -5px 12px rgba(255,255,255,.3);
+    }
+    .btn--icon { padding: 13px; }
+    .btn--sm { padding: 9px 14px; font-size: .7rem; border-radius: var(--radius-sm); gap: 7px; }
+    .btn--sm.btn--icon { padding: 9px; }
+    .btn--sm .icon { width: 16px; height: 16px; }
+
+    /* 搜索 + 筛选 */
+    .search-bar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      background: var(--inset);
+      box-shadow: inset 5px 5px 12px var(--shade), inset -5px -5px 12px var(--highlight);
+    }
+    .search-bar .icon { color: var(--accent); }
+    .search-input {
+      flex: 1; min-width: 0;
+      background: transparent; border: none; outline: none;
+      font-size: .88rem; letter-spacing: .04em; color: var(--ink);
+    }
+    .search-input::placeholder { color: var(--muted); }
+    .search-clear {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 26px; height: 26px; border-radius: 50%;
+      border: none; cursor: pointer; color: var(--muted);
+      background: var(--light);
+      box-shadow:
+        2px 2px 5px var(--shadow), -2px -2px 5px var(--highlight);
+    }
+    .search-clear:hover { color: var(--ink); }
+
+    .filters {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+    }
+    .filters-label {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: .66rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--muted); margin-right: 4px;
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 8px 16px;
+      font-size: .72rem; font-weight: 700; letter-spacing: .08em;
+      color: var(--muted);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      border: none; border-radius: 999px;
+      cursor: pointer; white-space: nowrap;
+      box-shadow:
+        5px 5px 12px var(--shadow), -4px -4px 10px var(--highlight),
+        inset -2px -2px 5px var(--shade), inset 2px 2px 5px var(--highlight);
+      transition: box-shadow .16s var(--ease-clay), color .2s ease, transform .16s var(--ease-clay);
+    }
+    .pill:hover { color: var(--ink2); transform: translateY(-1px); }
+    .pill:active { box-shadow: inset 5px 5px 11px var(--shade), inset -5px -5px 11px var(--highlight); }
+    .pill--on {
+      color: #fff;
+      background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 74%, #fff), var(--accent));
+      box-shadow:
+        5px 5px 14px color-mix(in srgb, var(--accent) 40%, transparent),
+        -4px -4px 10px var(--highlight),
+        inset -2px -2px 6px rgba(0,0,0,.14), inset 2px 2px 6px rgba(255,255,255,.4);
+    }
+    .pill:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+
+    /* 主题 & 字号 */
+    .panel-row {
+      display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap;
+      padding: 14px 18px;
+      border-radius: var(--radius-md);
+      background: var(--inset);
+      box-shadow: inset 5px 5px 12px var(--shade), inset -5px -5px 12px var(--highlight);
+    }
+    .theme-swatch {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px; border-radius: 50%;
+      border: 3px solid transparent;
+      cursor: pointer; padding: 0;
+      transition: transform .2s var(--ease-clay), border-color .2s ease;
+      box-shadow:
+        4px 4px 10px var(--shadow), -3px -3px 8px var(--highlight),
+        inset -2px -2px 5px rgba(0,0,0,.14), inset 2px 2px 5px rgba(255,255,255,.3);
+    }
+    .theme-swatch:hover { transform: translateY(-2px) scale(1.06); }
+    .theme-swatch--on { border-color: var(--ink); }
+    .theme-swatch .icon { width: 16px; height: 16px; color: #fff; }
+
+    /* 每日一句 */
+    .daily {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 20px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        12px 12px 30px var(--shadow), -10px -10px 26px var(--highlight),
+        inset -3px -3px 9px var(--shade), inset 3px 3px 9px var(--highlight);
+    }
+    .daily-mark {
+      display: grid; place-items: center; width: 44px; height: 44px; flex: 0 0 auto;
+      color: #fff; background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 74%, #fff), var(--accent));
+      border-radius: 14px;
+      box-shadow:
+        5px 5px 13px color-mix(in srgb, var(--accent) 38%, transparent),
+        -4px -4px 11px var(--highlight),
+        inset -2px -2px 6px rgba(0,0,0,.13), inset 2px 2px 6px rgba(255,255,255,.38);
+    }
+    .daily-body { flex: 1; min-width: 0; }
+    .daily-label { margin: 0 0 4px; font-size: .66rem; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); }
+    .daily-text { margin: 0 0 4px; font-family: var(--serif); font-size: .96rem; line-height: 1.65; color: var(--ink); }
+    .daily-by { font-size: .7rem; letter-spacing: .08em; color: var(--muted); }
+
+    /* 心选 */
+    .fav, .notes-panel, .checkin-panel {
+      padding: 20px 22px 24px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        12px 12px 30px var(--shadow), -10px -10px 26px var(--highlight),
+        inset -3px -3px 9px var(--shade), inset 3px 3px 9px var(--highlight);
+    }
+    .panel-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .panel-title {
+      display: inline-flex; align-items: center; gap: 10px; margin: 0;
+      font-family: var(--serif); font-size: 1.02rem; font-weight: 700; letter-spacing: .1em;
+    }
+    .panel-title .icon { color: var(--accent); }
+    .panel-count { font-size: .72rem; letter-spacing: .08em; color: var(--muted); }
+
+    .list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+    .list-item {
+      display: flex; align-items: flex-start; gap: 14px;
+      padding: 14px 16px;
+      border-radius: var(--radius-md);
+      background: var(--inset);
+      box-shadow: inset 5px 5px 12px var(--shade), inset -5px -5px 12px var(--highlight);
+      animation: itemIn .4s var(--ease-clay) both;
+    }
+    @keyframes itemIn {
+      from { opacity: 0; transform: translateY(10px) scale(.98); }
+      to   { opacity: 1; transform: none; }
+    }
+    .list-main { flex: 1; min-width: 0; }
+    .list-text { margin: 0 0 6px; font-family: var(--serif); font-size: .92rem; line-height: 1.68; color: var(--ink); word-break: break-word; }
+    .list-by { display: inline-flex; align-items: center; gap: 6px; font-size: .68rem; letter-spacing: .1em; color: var(--muted); }
+    .list-by .icon { width: 12px; height: 12px; }
+    .list-tools { display: flex; gap: 8px; flex: 0 0 auto; align-items: flex-start; }
+    .list-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+
+    .empty {
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      padding: 32px 18px; text-align: center; color: var(--muted); font-size: .84rem;
+    }
+    .empty .icon { color: color-mix(in srgb, var(--accent) 60%, transparent); }
+
+    .panel-foot { display: flex; justify-content: center; margin-top: 14px; }
+
+    /* 心情打卡 */
+    .mood-grid { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+    .mood-chip {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 10px 16px;
+      font-size: .78rem; font-weight: 700; letter-spacing: .06em;
+      color: var(--ink2);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      border: none; border-radius: 999px; cursor: pointer;
+      box-shadow:
+        5px 5px 12px var(--shadow), -4px -4px 10px var(--highlight),
+        inset -2px -2px 5px var(--shade), inset 2px 2px 5px var(--highlight);
+      transition: transform .16s var(--ease-clay), box-shadow .16s var(--ease-clay);
+    }
+    .mood-chip:hover { transform: translateY(-2px); }
+    .mood-chip:active { box-shadow: inset 5px 5px 11px var(--shade), inset -5px -5px 11px var(--highlight); }
+    .mood-dot {
+      display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+      box-shadow: inset -1px -1px 2px rgba(0,0,0,.25), inset 1px 1px 2px rgba(255,255,255,.4);
+    }
+    .mood-chip--on {
+      color: #fff;
+      background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 74%, #fff), var(--accent));
+      box-shadow:
+        5px 5px 14px color-mix(in srgb, var(--accent) 40%, transparent),
+        -4px -4px 10px var(--highlight),
+        inset -2px -2px 6px rgba(0,0,0,.14), inset 2px 2px 6px rgba(255,255,255,.4);
+    }
+
+    /* 侧边抽屉 */
+    .drawer-mask {
+      position: fixed; inset: 0; z-index: 80;
+      background: rgba(20, 12, 30, .32);
+      backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
+      opacity: 0; pointer-events: none;
+      transition: opacity .3s ease;
+    }
+    .drawer-mask--on { opacity: 1; pointer-events: auto; }
+
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; z-index: 90;
+      width: min(420px, 92vw);
+      padding: 22px 20px 30px;
+      display: flex; flex-direction: column; gap: 14px;
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        -16px 0 40px var(--shadow), inset 3px 3px 9px var(--highlight);
+      transform: translateX(100%);
+      transition: transform .4s var(--ease-clay);
+      overflow-y: auto;
+    }
+    .drawer--on { transform: translateX(0); }
+    .drawer-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    }
+    .drawer-tabs { display: flex; gap: 8px; flex-wrap: wrap; }
+    .drawer-body { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+
+    /* 弹窗 */
+    .modal-mask {
+      position: fixed; inset: 0; z-index: 100;
+      display: grid; place-items: center; padding: 20px;
+      background: rgba(20, 12, 30, .4);
+      backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+      animation: fadeIn .25s ease both;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .modal {
+      width: min(560px, 92vw);
+      padding: 24px 24px 26px;
+      border-radius: var(--radius-lg);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        18px 18px 44px var(--shadow), -12px -12px 32px var(--highlight),
+        inset -3px -3px 10px var(--shade), inset 3px 3px 10px var(--highlight);
+      animation: modalIn .4s var(--ease-clay) both;
+    }
+    @keyframes modalIn {
+      from { opacity: 0; transform: translateY(20px) scale(.94); }
+      to   { opacity: 1; transform: none; }
+    }
+    .modal-head {
+      display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .modal-title {
+      display: inline-flex; align-items: center; gap: 10px; margin: 0;
+      font-family: var(--serif); font-size: 1.05rem; font-weight: 700; letter-spacing: .1em;
+    }
+    .modal-title .icon { color: var(--accent); }
+    .modal-quote {
+      margin: 0 0 12px; padding: 14px 16px;
+      font-family: var(--serif); font-size: .96rem; line-height: 1.7; color: var(--ink);
+      background: var(--inset); border-radius: var(--radius-md);
+      box-shadow: inset 4px 4px 10px var(--shade), inset -4px -4px 10px var(--highlight);
+    }
+    .modal-by { margin: 0 0 16px; font-size: .76rem; letter-spacing: .08em; color: var(--muted); }
+    .modal-field { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+    .modal-field-label {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-size: .68rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--muted);
+    }
+    .modal-textarea {
+      width: 100%; min-height: 120px; padding: 14px 16px;
+      font-family: var(--serif); font-size: .92rem; line-height: 1.7; color: var(--ink);
+      background: var(--inset); border: none; border-radius: var(--radius-md);
+      outline: none; resize: vertical;
+      box-shadow: inset 4px 4px 10px var(--shade), inset -4px -4px 10px var(--highlight);
+    }
+    .modal-textarea:focus { box-shadow: inset 4px 4px 10px var(--shade), inset -4px -4px 10px var(--highlight), 0 0 0 3px color-mix(in srgb, var(--accent) 45%, transparent); }
+    .modal-foot { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; }
+
+    /* 页脚 */
+    .footer {
+      display: flex; align-items: center; justify-content: center; flex-wrap: wrap;
+      gap: 10px 16px; padding-top: 4px;
+      font-size: .7rem; letter-spacing: .07em; color: var(--muted); text-align: center;
+    }
+    .footer .dot { color: var(--accent); }
+
+    /* Toast */
+    .toast {
+      position: fixed; left: 50%; bottom: 26px; z-index: 110;
+      display: inline-flex; align-items: center; gap: 11px;
+      max-width: calc(100vw - 36px); padding: 14px 22px;
+      font-size: .8rem; font-weight: 700; letter-spacing: .04em; color: var(--ink);
+      border-radius: var(--radius-md);
+      background: linear-gradient(150deg, var(--light), var(--dark));
+      box-shadow:
+        10px 10px 26px var(--shadow), -8px -8px 22px var(--highlight),
+        inset -2px -2px 7px var(--shade), inset 2px 2px 7px var(--highlight);
+      transform: translateX(-50%);
+      animation: toastIn .34s var(--ease-clay) both;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translate(-50%, 20px) scale(.94); }
+      to   { opacity: 1; transform: translate(-50%, 0) scale(1); }
+    }
+    .toast--ok    .icon { color: #48c78e; }
+    .toast--info  .icon { color: var(--accent); }
+    .toast--error .icon { color: #ff6b6b; }
+
+    /* 响应式 */
+    @media (max-width: 720px) {
+      .page { gap: 14px; }
+      .topbar { padding: 12px 14px; gap: 12px; }
+      .brand-mark { width: 44px; height: 44px; border-radius: 15px; }
+      .brand-mark .icon { width: 24px; height: 24px; }
+      .brand-title { font-size: 1.02rem; letter-spacing: .12em; }
+      .brand-sub { font-size: .64rem; }
+      .badge { padding: 7px 12px; font-size: .64rem; }
+      .stage { padding: 26px 20px 22px; border-radius: 32px; }
+      .stage-quote-mark { width: 34px; height: 34px; margin-bottom: 12px; }
+      .quote-meta { margin-top: 18px; padding-top: 16px; gap: 10px; }
+      .quote-index { margin-left: 0; width: 100%; }
+      .actions { padding: 14px 14px; gap: 9px; }
+      .btn { padding: 11px 16px; font-size: .74rem; }
+      .btn--sm { padding: 8px 11px; font-size: .66rem; }
+      .fav, .notes-panel, .checkin-panel { padding: 16px 16px 20px; }
+      .list-item { padding: 12px 13px; gap: 10px; }
+      .list-text { font-size: .86rem; }
+      .toast { bottom: 18px; padding: 12px 18px; font-size: .76rem; }
+      .modal { padding: 20px 18px 22px; }
+    }
+    @media (max-width: 420px) {
+      .actions { gap: 7px; }
+      .btn { padding: 10px 13px; font-size: .7rem; gap: 6px; }
+      .btn--sm { padding: 7px 9px; }
+      .filters { gap: 6px; }
+      .pill { padding: 7px 12px; font-size: .66rem; }
+      .list-tools { flex-direction: column; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: .01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .01ms !important;
+      }
+      .petals, .stars { display: none; }
+    }
+  `;
+
+  style ":root{" +
+    "--accent:" + get(currentTheme, "accent", "#ff8fab") + ";" +
+    "--bg:" + get(currentTheme, "bg", "#efe7f6") + ";" +
+    "--light:" + get(currentTheme, "light", "#ffffff") + ";" +
+    "--dark:" + get(currentTheme, "dark", "#e0d3ee") + ";" +
+    "--inset:" + get(currentTheme, "inset", "#f4ecfa") + ";" +
+    "--ink:" + get(currentTheme, "ink", "#2c2438") + ";" +
+    "--ink2:" + get(currentTheme, "ink2", "#4a3f5c") + ";" +
+    "--muted:" + get(currentTheme, "muted", "#8d80a3") + ";" +
+    "--hair:" + get(currentTheme, "hair", "rgba(120,92,150,.12)") + ";" +
+    "--shadow:" + get(currentTheme, "shadow", "rgba(176,152,202,.42)") + ";" +
+    "--highlight:" + get(currentTheme, "highlight", "rgba(255,255,255,.96)") + ";" +
+    "--shade:" + get(currentTheme, "shade", "rgba(120,92,150,.13)") + ";" +
+    "--glow1:" + get(currentTheme, "glow1", "#ff8fab") + ";" +
+    "--glow2:" + get(currentTheme, "glow2", "#b8a4ff") + ";" +
+    "--glow3:" + get(currentTheme, "glow3", "#6fd4c0") + ";" +
+    "--serif:'Noto Serif SC','Songti SC','STSong','SimSun',Georgia,serif;" +
+    "--mono:ui-monospace,'SF Mono',Menlo,Consolas,monospace;" +
+    "--radius-lg:30px;" +
+    "--radius-md:22px;" +
+    "--radius-sm:16px;" +
+    "--ease-clay:cubic-bezier(.34,1.36,.64,1);" +
+    "}";
+
+  // ============================================================
+  // 动作
+  // ============================================================
+  action pickTheme(list, name) {
+    for (t in list) {
+      if (t.id == name) {
+        return t;
+      }
+    }
+    return {
+      id: "晨光", accent: "#ff8fab", bg: "#efe7f6", light: "#ffffff", dark: "#e0d3ee",
+      inset: "#f4ecfa", ink: "#2c2438", ink2: "#4a3f5c", muted: "#8d80a3",
+      hair: "rgba(120,92,150,.12)", shadow: "rgba(176,152,202,.42)",
+      highlight: "rgba(255,255,255,.96)", shade: "rgba(120,92,150,.13)",
+      darkMode: false, glow1: "#ff8fab", glow2: "#b8a4ff", glow3: "#6fd4c0"
+    };
+  }
+
+  action hasId(list, id) {
+    for (item in list) {
+      if (item.id == id) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  action hasCheckinToday(list) {
+    let day = floor(now() / 86400000);
+    for (item in list) {
+      if (item.day == day) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  action findNote(id) {
+    for (n in notes) {
+      if (n.id == id) {
+        return n;
+      }
+    }
+    return null;
+  }
+
+  action notify(message, kind = "info") {
+    toast = message;
+    toastKind = kind;
+    after (2200) {
+      if (toast == message) {
+        toast = "";
+      }
+    }
+  }
+
+  action persist() {
+    save("themeName", themeName);
+    save("fontSize", fontSize);
+    save("favorites", favorites);
+    save("notes", notes);
+    save("checkins", checkins);
+    save("historyLog", historyLog);
+  }
+
+  action restore() {
+    let t = load("themeName");
+    if (t != null && len(t) > 0) {
+      themeName = t;
+    }
+    let f = load("fontSize");
+    if (f != null && f > 0) {
+      fontSize = f;
+    }
+    let favs = load("favorites");
+    if (favs != null && len(favs) > 0) {
+      favorites = favs;
+    }
+    let ns = load("notes");
+    if (ns != null && len(ns) > 0) {
+      notes = ns;
+    }
+    let cs = load("checkins");
+    if (cs != null && len(cs) > 0) {
+      checkins = cs;
+    }
+    let hs = load("historyLog");
+    if (hs != null && len(hs) > 0) {
+      historyLog = hs;
+    }
+  }
+
+  action initApp() {
+    restore();
+    startTyping();
+    startClock();
+    after (1500) {
+      booting = false;
+    }
+  }
+
+  action startClock() {
+    let info = clockInfo();
+    clock = info.time;
+    greeting = info.greeting;
+    dateLabel = info.date;
+    every (1000) {
+      let i = clockInfo();
+      clock = i.time;
+      if (greeting != i.greeting) {
+        greeting = i.greeting;
+      }
+      if (dateLabel != i.date) {
+        dateLabel = i.date;
+      }
+    }
+  }
+
+  action setTheme(name) {
+    themeName = name;
+    let t = pickTheme(themes, name);
+    applyDark(get(t, "darkMode", false));
+    notify("已切换到「" + name + "」", "ok");
+    persist();
+  }
+
+  action cycleFontSize() {
+    fontSize = fontSize >= 3 ? 1 : fontSize + 1;
+    notify("字号：" + fontSizeLabel, "info");
+    persist();
+  }
+
+  action setCategory(category) {
+    if (activeCategory == category) {
+      return;
+    }
+    activeCategory = category;
+    let count = len(quotes);
+    for (i in range(0, count)) {
+      let idx = (currentIndex + i) % count;
+      let q = get(quotes, idx);
+      if (q != null) {
+        if (category == "全部" || q.category == category) {
+          currentIndex = idx;
+          startTyping();
+          notify("已切换到「" + category + "」", "info");
+          return;
+        }
+      }
+    }
+    notify("这一类还没有句子", "info");
+  }
+
+  action step(direction) {
+    let count = len(quotes);
+    if (count == 0) {
+      return;
+    }
+    for (i in range(0, count)) {
+      let idx = (currentIndex + direction * (i + 1) + count * 64) % count;
+      let q = get(quotes, idx);
+      if (q != null) {
+        if (activeCategory == "全部" || q.category == activeCategory) {
+          currentIndex = idx;
+          visited += 1;
+          pushHistory(idx);
+          startTyping();
+          return;
+        }
+      }
+    }
+  }
+
+  action pushHistory(idx) {
+    let entry = { id: idx, at: now() };
+    let next = [entry];
+    for (h in historyLog) {
+      if (h.id != idx && len(next) < 12) {
+        next = append(next, h);
+      }
+    }
+    historyLog = next;
+  }
+
+  action jumpTo(idx) {
+    if (idx < 0 || idx >= len(quotes)) {
+      return;
+    }
+    currentIndex = idx;
+    visited += 1;
+    pushHistory(idx);
+    startTyping();
+    drawerOpen = false;
+  }
+
+  action shuffle() {
+    let count = len(quotes);
+    if (count == 0) {
+      return;
+    }
+    let start = now() % count;
+    for (i in range(0, count)) {
+      let idx = (start + i) % count;
+      let q = get(quotes, idx);
+      if (q != null) {
+        if (activeCategory == "全部" || q.category == activeCategory) {
+          currentIndex = idx;
+          visited += 1;
+          pushHistory(idx);
+          startTyping();
+          notify("缘分已至", "ok");
+          return;
+        }
+      }
+    }
+  }
+
+  action startTyping() {
+    typingToken += 1;
+    let token = typingToken;
+    typedChars = 0;
+    typing = true;
+    tick(token);
+  }
+
+  action tick(token) {
+    if (token != typingToken) {
+      return;
+    }
+    if (typedChars < len(currentQuote.text)) {
+      typedChars += 1;
+      after (30) {
+        tick(token);
+      }
+    } else {
+      typing = false;
+    }
+  }
+
+  action finishTyping() {
+    typingToken += 1;
+    typedChars = len(currentQuote.text);
+    typing = false;
+  }
+
+  action toggleFavorite() {
+    if (hasId(favorites, currentQuote.id)) {
+      let next = [];
+      for (f in favorites) {
+        if (f.id != currentQuote.id) {
+          next = append(next, f);
+        }
+      }
+      favorites = next;
+      notify("已从心选移除", "info");
+    } else {
+      favorites = append(favorites, currentQuote);
+      burstHeart();
+      notify("已收入心选", "ok");
+    }
+    persist();
+  }
+
+  action burstHeart() {
+    heartSeq += 1;
+    let seed = heartSeq;
+    let h = {
+      id: heartSeq,
+      left: 10 + (seed * 37) % 80,
+      duration: 1.6 + (seed % 5) * .12
+    };
+    hearts = append(hearts, h);
+    after (2000) {
+      let next = [];
+      for (item in hearts) {
+        if (item.id != h.id) {
+          next = append(next, item);
+        }
+      }
+      hearts = next;
+    }
+  }
+
+  action dropFavorite(id) {
+    let next = [];
+    for (f in favorites) {
+      if (f.id != id) {
+        next = append(next, f);
+      }
+    }
+    favorites = next;
+    notify("已移除", "info");
+    persist();
+  }
+
+  action clearFavorites() {
+    if (len(favorites) == 0) {
+      notify("心选还是空的", "info");
+      return;
+    }
+    favorites = [];
+    notify("心选已清空", "info");
+    persist();
+  }
+
+  action copyQuote() {
+    let payload = currentQuote.text + "  —— " + currentQuote.author;
+    if (copyText(payload)) {
+      notify("已复制这句温柔", "ok");
+    } else {
+      notify("复制失败，请手动选择", "error");
+    }
+  }
+
+  action copyText(text) {
+    return copyToClipboard(text);
+  }
+
+  action openNote(id) {
+    noteTargetId = id;
+    let existing = findNote(id);
+    if (existing != null) {
+      noteDraft = existing.text;
+    } else {
+      noteDraft = "";
+    }
+    activeModal = "note";
+  }
+
+  action saveNote() {
+    let draft = trim(noteDraft);
+    if (len(draft) == 0) {
+      let next = [];
+      for (n in notes) {
+        if (n.id != noteTargetId) {
+          next = append(next, n);
+        }
+      }
+      notes = next;
+      notify("已清空这条私语", "info");
+    } else {
+      let found = false;
+      let next = [];
+      for (n in notes) {
+        if (n.id == noteTargetId) {
+          next = append(next, { id: noteTargetId, text: draft });
+          found = true;
+        } else {
+          next = append(next, n);
+        }
+      }
+      if (!found) {
+        next = append(next, { id: noteTargetId, text: draft });
+      }
+      notes = next;
+      notify("已写下私语", "ok");
+    }
+    activeModal = null;
+    persist();
+  }
+
+  action closeModal() {
+    activeModal = null;
+  }
+
+  action dropNote(id) {
+    let next = [];
+    for (n in notes) {
+      if (n.id != id) {
+        next = append(next, n);
+      }
+    }
+    notes = next;
+    notify("已删除这条私语", "info");
+    persist();
+  }
+
+  action pickMood(id) {
+    let day = floor(now() / 86400000);
+    let next = [];
+    let updated = false;
+    for (c in checkins) {
+      if (c.day == day) {
+        next = append(next, { day: day, mood: id, at: now() });
+        updated = true;
+      } else {
+        next = append(next, c);
+      }
+    }
+    if (!updated) {
+      next = append(next, { day: day, mood: id, at: now() });
+    }
+    checkins = next;
+    todayMood = id;
+    for (m in moods) {
+      if (m.id == id) {
+        notify("今日心情：" + m.label, "ok");
+      }
+    }
+    persist();
+  }
+
+  action clearCheckins() {
+    checkins = [];
+    todayMood = "";
+    notify("打卡记录已清空", "info");
+    persist();
+  }
+
+  action openDrawer(tab) {
+    drawerTab = tab;
+    drawerOpen = true;
+  }
+
+  action closeDrawer() {
+    drawerOpen = false;
+  }
+
+  action setSearch(value) {
+    searchQuery = value;
+  }
+
+  action clearSearch() {
+    searchQuery = "";
+  }
+
+  action searchNext() {
+    let query = lower(trim(searchQuery));
+    if (len(query) == 0) {
+      notify("请输入要搜索的词", "info");
+      return;
+    }
+    let count = len(quotes);
+    for (i in range(1, count + 1)) {
+      let idx = (currentIndex + i) % count;
+      let q = get(quotes, idx);
+      if (q != null) {
+        let haystack = lower(q.text + " " + q.author + " " + q.category);
+        if (indexOf(haystack, query) >= 0) {
+          currentIndex = idx;
+          startTyping();
+          notify("已定位到匹配的句子", "ok");
+          return;
+        }
+      }
+    }
+    notify("没有找到匹配的句子", "error");
+  }
+
+  action loadDaily() {
+    currentIndex = dailyIndex;
+    startTyping();
+    notify("今日一句", "ok");
+  }
+
+  action onQuoteClick() {
+    finishTyping();
+  }
+
+  action toggleDrawer() {
+    if (drawerOpen) {
+      drawerOpen = false;
+    } else {
+      drawerOpen = true;
+      drawerTab = "fav";
+    }
+  }
+
+  // ============================================================
+  // 视图
+  // ============================================================
+  view {
+    svg(class = "sprite", aria:hidden = "true") {
+      each (icon in iconPaths key icon.id) {
+        symbol(id = icon.id, viewBox = "0 0 24 24") {
+          each (pd in icon.paths key pd) {
+            path(d = pd);
+          }
+        }
+      }
+    }
+
+    div(class = "petals", aria:hidden = "true") {
+      each (p in petals key p.id) {
+        span(
+          class = "petal",
+          style:left = string(p.left) + "%",
+          style:width = string(p.size) + "px",
+          style:height = string(p.size) + "px",
+          style:animationDuration = string(p.duration) + "s",
+          style:animationDelay = string(p.delay) + "s"
+        ) {
+          svg(viewBox = "0 0 24 24", aria:hidden = "true") { use(href = "#i-petal"); }
+        }
+      }
+    }
+
+    div(class = "stars" + (isDark ? " stars--on" : ""), aria:hidden = "true") {
+      each (s in stars key s.id) {
+        span(
+          class = "star",
+          style:left = string(s.left) + "%",
+          style:top = string(s.top) + "%",
+          style:width = string(s.size) + "px",
+          style:height = string(s.size) + "px",
+          style:animationDelay = string(s.delay) + "s"
+        );
+      }
+    }
+
+    div(class = "hearts", aria:hidden = "true") {
+      each (h in hearts key h.id) {
+        span(
+          class = "burst",
+          style:left = string(h.left) + "%",
+          style:animationDuration = string(h.duration) + "s"
+        ) {
+          svg(viewBox = "0 0 24 24", aria:hidden = "true") { use(href = "#i-heart-fill"); }
+        }
+      }
+    }
+
+    div(class = "boot" + (booting ? "" : " boot--done")) {
+      div(class = "boot-card") {
+        div(class = "boot-hearts") {
+          i { svg(class = "icon icon--lg", aria:hidden = "true") { use(href = "#i-heart-fill"); } }
+          i { svg(class = "icon icon--lg", aria:hidden = "true") { use(href = "#i-heart-fill"); } }
+          i { svg(class = "icon icon--lg", aria:hidden = "true") { use(href = "#i-heart-fill"); } }
+        }
+        h2(class = "boot-title") { text "心语笺"; }
+        p(class = "boot-sub") { text "正在为你翻开一页温柔" }
+        div(class = "boot-track") { i }
+      }
+    }
+
+    div(class = "page") {
+
+      header(class = "topbar") {
+        div(class = "brand") {
+          div(class = "brand-mark") {
+            svg(class = "icon icon--lg", aria:hidden = "true") { use(href = "#i-feather"); }
+          }
+          div(class = "brand-text") {
+            h1(class = "brand-title") { text "心语笺"; }
+            p(class = "brand-sub") { text "纸短情长 · 一字一句" }
+          }
+        }
+        div(class = "topbar-actions") {
+          span(class = "badge", title = "当前主题") {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-palette"); }
+            span { text themeName; }
+          }
+          button(
+            class = "btn btn--icon",
+            title = "字号调节",
+            aria:label = "字号调节",
+            on:click = { cycleFontSize(); }
+          ) {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-type"); }
+          }
+          button(
+            class = "btn btn--icon",
+            title = "打开抽屉",
+            aria:label = "打开抽屉",
+            on:click = { toggleDrawer(); }
+          ) {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-menu"); }
+          }
+        }
+      }
+
+      section(class = "greeting-strip") {
+        div(class = "greeting-text") {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-sparkle"); }
+          span(class = "greeting-main") { text greeting; }
+          span(class = "greeting-date") { text dateLabel; }
+        }
+        span(class = "greeting-clock") {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-clock"); }
+          span { text clock; }
+        }
+      }
+
+      section(class = "stage") {
+        span(class = "stage-glow", aria:hidden = "true");
+
+        span(class = "stage-quote-mark", aria:hidden = "true") {
+          svg(class = "icon icon--fill", style:width = "100%", style:height = "100%") {
+            use(href = "#i-quote");
+          }
+        }
+
+        div(class = "stage-body") {
+          p(
+            class = "quote-line",
+            style:fontSize = scaledSize,
+            on:click = { onQuoteClick(); },
+            title = "点击立即显示全文"
+          ) {
+            text displayText;
+            when (typing) {
+              span(class = "caret", aria:hidden = "true");
+            }
+          }
+
+          div(class = "quote-meta") {
+            span(class = "quote-author") {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-quill"); }
+              span { text currentQuote.author; }
+            }
+            span(class = "quote-cat") { text currentQuote.category; }
+            span(class = "quote-index") {
+              text string(quoteNumber) + " / " + string(quoteTotal);
+            }
+          }
+
+          div(class = "progress-track", aria:hidden = "true") {
+            div(class = "progress-fill", style:width = progress + "%");
+          }
+        }
+      }
+
+      section(class = "actions") {
+        button(
+          class = "btn",
+          title = "上一句",
+          aria:label = "上一句",
+          on:click = { step(-1); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-left"); }
+          span { text "上一句"; }
+        }
+
+        button(
+          class = "btn btn--accent",
+          title = "随机一句",
+          aria:label = "随机一句",
+          on:click = { shuffle(); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-shuffle"); }
+          span { text "换一句"; }
+        }
+
+        when (isFav) {
+          button(
+            class = "btn",
+            title = "从心选移除",
+            aria:label = "取消收藏",
+            on:click = { toggleFavorite(); }
+          ) {
+            svg(class = "icon icon--fill", aria:hidden = "true") { use(href = "#i-heart-fill"); }
+            span { text "已收藏"; }
+          }
+        } else {
+          button(
+            class = "btn",
+            title = "收入心选",
+            aria:label = "收藏",
+            on:click = { toggleFavorite(); }
+          ) {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart"); }
+            span { text "收藏"; }
+          }
+        }
+
+        button(
+          class = "btn btn--icon",
+          title = "写下私语",
+          aria:label = "写私语",
+          on:click = { openNote(currentQuote.id); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-note"); }
+        }
+
+        button(
+          class = "btn btn--icon",
+          title = "复制这句",
+          aria:label = "复制",
+          on:click = { copyQuote(); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-copy"); }
+        }
+
+        button(
+          class = "btn",
+          title = "下一句",
+          aria:label = "下一句",
+          on:click = { step(1); }
+        ) {
+          span { text "下一句"; }
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-right"); }
+        }
+      }
+
+      section(class = "search-bar") {
+        svg(class = "icon", aria:hidden = "true") { use(href = "#i-search"); }
+        input(
+          class = "search-input",
+          bind:value = searchQuery,
+          placeholder = "搜一搜，找一句想说的话…",
+          attr:type = "text",
+          attr:autocomplete = "off",
+          aria:label = "搜索语录"
+        );
+        when (hasSearch) {
+          button(
+            class = "search-clear",
+            title = "清除",
+            aria:label = "清除搜索",
+            on:click = { clearSearch(); }
+          ) {
+            svg(class = "icon icon--sm", aria:hidden = "true") { use(href = "#i-x"); }
+          }
+          button(
+            class = "btn btn--sm",
+            title = "定位下一处",
+            aria:label = "搜索",
+            on:click = { searchNext(); }
+          ) {
+            span { text "定位"; }
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-right"); }
+          }
+        }
+      }
+
+      nav(class = "filters", aria:label = "语录分类") {
+        span(class = "filters-label") {
+          svg(class = "icon icon--sm", aria:hidden = "true") { use(href = "#i-petal"); }
+          span { text "心境"; }
+        }
+        each (cat in categories key cat) {
+          button(
+            class = "pill" + (activeCategory == cat ? " pill--on" : ""),
+            on:click = { setCategory(cat); }
+          ) {
+            text cat;
+          }
+        }
+      }
+
+      section(class = "panel-row", aria:label = "主题") {
+        span(class = "filters-label") {
+          svg(class = "icon icon--sm", aria:hidden = "true") { use(href = "#i-palette"); }
+          span { text "主题"; }
+        }
+        each (t in themes key t.id) {
+          button(
+            class = "theme-swatch" + (themeName == t.id ? " theme-swatch--on" : ""),
+            style:background = "linear-gradient(150deg," + get(t, "accent", "#ff8fab") + ", color-mix(in srgb," + get(t, "accent", "#ff8fab") + " 60%, #fff))",
+            title = t.id,
+            aria:label = t.id,
+            on:click = { setTheme(t.id); }
+          ) {
+            when (themeName == t.id) {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-check"); }
+            }
+          }
+        }
+      }
+
+      section(class = "daily") {
+        div(class = "daily-mark") {
+          svg(class = "icon icon--lg", aria:hidden = "true") { use(href = "#i-star"); }
+        }
+        div(class = "daily-body") {
+          p(class = "daily-label") { text "今日一句"; }
+          p(class = "daily-text") { text dailyQuote.text; }
+          span(class = "daily-by") { text "—— " + dailyQuote.author; }
+        }
+        button(
+          class = "btn btn--sm btn--icon",
+          title = "翻到今日一句",
+          aria:label = "查看今日一句",
+          on:click = { loadDaily(); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-right"); }
+        }
+      }
+
+      section(class = "fav") {
+        header(class = "panel-head") {
+          h2(class = "panel-title") {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart-fill"); }
+            span { text "心选"; }
+          }
+          span(class = "panel-count") { text string(favCount) + " 句" }
+        }
+
+        when (favCount > 0) {
+          ul(class = "list") {
+            each (item in favorites key item.id) {
+              li(class = "list-item") {
+                div(class = "list-main") {
+                  p(class = "list-text") { text item.text; }
+                  span(class = "list-by") {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-quill"); }
+                    span { text item.author; }
+                  }
+                }
+                div(class = "list-tools") {
+                  button(
+                    class = "btn btn--sm btn--icon",
+                    title = "翻到这句",
+                    aria:label = "翻到",
+                    on:click = { jumpTo(item.id - 1); }
+                  ) {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-upload"); }
+                  }
+                  button(
+                    class = "btn btn--sm btn--icon",
+                    title = "移除",
+                    aria:label = "移除",
+                    on:click = { dropFavorite(item.id); }
+                  ) {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+                  }
+                }
+              }
+            }
+          }
+          footer(class = "panel-foot") {
+            button(
+              class = "btn btn--sm",
+              on:click = { clearFavorites(); }
+            ) {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+              span { text "清空心选"; }
+            }
+          }
+        } else {
+          div(class = "empty") {
+            svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-inbox"); }
+            span { text "还没有收藏的句子 · 遇见喜欢的，点一下爱心" }
+          }
+        }
+      }
+
+      section(class = "checkin-panel") {
+        header(class = "panel-head") {
+          h2(class = "panel-title") {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-calendar"); }
+            span { text "今日心情"; }
+          }
+          span(class = "panel-count") {
+            when (todayHasCheckin) {
+              text "已打卡 · 共 " + string(checkinCount) + " 天"
+            } else {
+              text "还没打卡"
+            }
+          }
+        }
+        div(class = "mood-grid") {
+          each (m in moods key m.id) {
+            button(
+              class = "mood-chip" + (todayMood == m.id ? " mood-chip--on" : ""),
+              title = m.label,
+              aria:label = m.label,
+              on:click = { pickMood(m.id); }
+            ) {
+              span(class = "mood-dot", style:background = m.color);
+              span { text m.label; }
+            }
+          }
+        }
+        when (checkinCount > 0) {
+          footer(class = "panel-foot") {
+            button(class = "btn btn--sm", on:click = { clearCheckins(); }) {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+              span { text "清空打卡" }
+            }
+          }
+        }
+      }
+
+      section(class = "notes-panel") {
+        header(class = "panel-head") {
+          h2(class = "panel-title") {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-note"); }
+            span { text "我的私语"; }
+          }
+          span(class = "panel-count") { text string(noteCount) + " 条" }
+        }
+        when (noteCount > 0) {
+          ul(class = "list") {
+            each (n in notes key n.id) {
+              li(class = "list-item") {
+                div(class = "list-main") {
+                  p(class = "list-text") { text n.text; }
+                  span(class = "list-by") {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-quote"); }
+                    span { text "关联第 " + string(n.id) + " 句" }
+                  }
+                }
+                div(class = "list-tools") {
+                  button(
+                    class = "btn btn--sm btn--icon",
+                    title = "编辑",
+                    aria:label = "编辑",
+                    on:click = { openNote(n.id); }
+                  ) {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-note"); }
+                  }
+                  button(
+                    class = "btn btn--sm btn--icon",
+                    title = "删除",
+                    aria:label = "删除",
+                    on:click = { dropNote(n.id); }
+                  ) {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          div(class = "empty") {
+            svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-note"); }
+            span { text "还没有写下私语 · 点「笔」为喜欢的句子记一句" }
+          }
+        }
+      }
+
+      footer(class = "footer") {
+        span { text "第 " + string(quoteNumber) + " 句 / 共 " + string(quoteTotal) + " 句" }
+        span(class = "dot") { text "·" }
+        span { text "已阅 " + string(visited) + " 句" }
+        span(class = "dot") { text "·" }
+        span { text "心选 " + string(favCount) }
+        span(class = "dot") { text "·" }
+        span { text "私语 " + string(noteCount) }
+        span(class = "dot") { text "·" }
+        span { text "打卡 " + string(checkinCount) + " 天" }
+      }
+
+    }
+
+    div(class = "drawer-mask" + (drawerOpen ? " drawer-mask--on" : ""), on:click = { closeDrawer(); });
+
+    aside(class = "drawer" + (drawerOpen ? " drawer--on" : ""), aria:hidden = drawerOpen ? "false" : "true") {
+      header(class = "drawer-head") {
+        h3(class = "panel-title") {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-menu"); }
+          span { text "收藏与足迹" }
+        }
+        button(
+          class = "btn btn--sm btn--icon",
+          title = "关闭",
+          aria:label = "关闭抽屉",
+          on:click = { closeDrawer(); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+        }
+      }
+
+      nav(class = "drawer-tabs") {
+        button(
+          class = "pill" + (drawerTab == "fav" ? " pill--on" : ""),
+          on:click = { openDrawer("fav"); }
+        ) {
+          text "心选 " + string(favCount);
+        }
+        button(
+          class = "pill" + (drawerTab == "notes" ? " pill--on" : ""),
+          on:click = { openDrawer("notes"); }
+        ) {
+          text "私语 " + string(noteCount);
+        }
+        button(
+          class = "pill" + (drawerTab == "history" ? " pill--on" : ""),
+          on:click = { openDrawer("history"); }
+        ) {
+          text "足迹 " + string(len(historyLog));
+        }
+        button(
+          class = "pill" + (drawerTab == "about" ? " pill--on" : ""),
+          on:click = { openDrawer("about"); }
+        ) {
+          text "关于";
+        }
+      }
+
+      div(class = "drawer-body") {
+
+        when (drawerTab == "fav") {
+          when (favCount > 0) {
+            ul(class = "list") {
+              each (item in favorites key item.id) {
+                li(class = "list-item") {
+                  div(class = "list-main") {
+                    p(class = "list-text") { text item.text; }
+                    span(class = "list-by") {
+                      svg(class = "icon", aria:hidden = "true") { use(href = "#i-quill"); }
+                      span { text item.author; }
+                    }
+                  }
+                  div(class = "list-tools") {
+                    button(
+                      class = "btn btn--sm btn--icon",
+                      title = "翻到这句",
+                      aria:label = "翻到",
+                      on:click = { jumpTo(item.id - 1); }
+                    ) {
+                      svg(class = "icon", aria:hidden = "true") { use(href = "#i-upload"); }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            div(class = "empty") {
+              svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-inbox"); }
+              span { text "心选还是空的" }
+            }
+          }
+        }
+
+        when (drawerTab == "notes") {
+          when (noteCount > 0) {
+            ul(class = "list") {
+              each (n in notes key n.id) {
+                li(class = "list-item") {
+                  div(class = "list-main") {
+                    p(class = "list-text") { text n.text; }
+                    span(class = "list-by") {
+                      svg(class = "icon", aria:hidden = "true") { use(href = "#i-quote"); }
+                      span { text "第 " + string(n.id) + " 句" }
+                    }
+                  }
+                  div(class = "list-tools") {
+                    button(
+                      class = "btn btn--sm btn--icon",
+                      title = "翻到这句",
+                      aria:label = "翻到",
+                      on:click = { jumpTo(n.id - 1); }
+                    ) {
+                      svg(class = "icon", aria:hidden = "true") { use(href = "#i-upload"); }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            div(class = "empty") {
+              svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-note"); }
+              span { text "还没有私语" }
+            }
+          }
+        }
+
+        when (drawerTab == "history") {
+          when (len(historyLog) > 0) {
+            ul(class = "list") {
+              each (h in historyLog key h.id) {
+                li(class = "list-item") {
+                  div(class = "list-main") {
+                    p(class = "list-text") {
+                      let q = get(quotes, h.id, currentQuote);
+                      text q.text;
+                    }
+                    span(class = "list-by") {
+                      svg(class = "icon", aria:hidden = "true") { use(href = "#i-clock"); }
+                      span { text "第 " + string(h.id + 1) + " 句" }
+                    }
+                  }
+                  div(class = "list-tools") {
+                    button(
+                      class = "btn btn--sm btn--icon",
+                      title = "翻到这句",
+                      aria:label = "翻到",
+                      on:click = { jumpTo(h.id); }
+                    ) {
+                      svg(class = "icon", aria:hidden = "true") { use(href = "#i-upload"); }
+                    }
+                  }
+                }
+              }
+            }
+          } else {
+            div(class = "empty") {
+              svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-clock"); }
+              span { text "还没有足迹" }
+            }
+          }
+        }
+
+        when (drawerTab == "about") {
+          div(class = "list") {
+            li(class = "list-item") {
+              div(class = "list-main") {
+                p(class = "list-text") {
+                  text "心语笺是一间安静的小屋，把喜欢的句子收在心里。";
+                }
+                span(class = "list-by") {
+                  svg(class = "icon", aria:hidden = "true") { use(href = "#i-feather"); }
+                  span { text "关于这个页面" }
+                }
+              }
+            }
+            li(class = "list-item") {
+              div(class = "list-main") {
+                p(class = "list-text") {
+                  text "主题、字号、心选、私语、打卡都会留在你的浏览器里。";
+                }
+                span(class = "list-by") {
+                  svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart-fill"); }
+                  span { text "本地保存" }
+                }
+              }
+            }
+            li(class = "list-item") {
+              div(class = "list-main") {
+                p(class = "list-text") {
+                  text "所有文字都只属于你，没有任何数据会离开这个页面。";
+                }
+                span(class = "list-by") {
+                  svg(class = "icon", aria:hidden = "true") { use(href = "#i-sparkle"); }
+                  span { text "隐私承诺" }
+                }
+              }
+            }
+          }
+        }
+
+      }
+    }
+
+    when (activeModal == "note") {
+      div(class = "modal-mask", on:click = { closeModal(); }) {
+        div(class = "modal", on:click = { };) {
+          header(class = "modal-head") {
+            h2(class = "modal-title") {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-note"); }
+              span { text "写一句私语" }
+            }
+            button(
+              class = "btn btn--sm btn--icon",
+              title = "关闭",
+              aria:label = "关闭",
+              on:click = { closeModal(); }
+            ) {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+            }
+          }
+          p(class = "modal-quote") {
+            let q = get(quotes, noteTargetId - 1, currentQuote);
+            text q.text;
+          }
+          p(class = "modal-by") {
+            let q = get(quotes, noteTargetId - 1, currentQuote);
+            text "—— " + q.author;
+          }
+          div(class = "modal-field") {
+            span(class = "modal-field-label") {
+              svg(class = "icon icon--sm", aria:hidden = "true") { use(href = "#i-quill"); }
+              span { text "私语" }
+            }
+            textarea(
+              class = "modal-textarea",
+              bind:value = noteDraft,
+              placeholder = "写点什么…"
+            );
+          }
+          footer(class = "modal-foot") {
+            button(class = "btn", on:click = { closeModal(); }) {
+              span { text "取消"; }
+            }
+            button(class = "btn btn--accent", on:click = { saveNote(); }) {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-check"); }
+              span { text "保存"; }
+            }
+          }
+        }
+      }
+    }
+
+    when (toast != "") {
+      div(class = "toast toast--" + toastKind, attr:role = "status") {
+        svg(class = "icon", aria:hidden = "true") { use(href = toastIcon); }
+        span { text toast; }
+      }
+    }
+  }
+}
+</script>
+
+<script type="module">
+import JLC from "./jlc.js";
+
+/* ============================================================
+   宿主能力：内核不能做的底层事
+   ============================================================ */
+
+function fallbackCopy(text) {
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+const capabilities = {
+  copyToClipboard: (text) => {
+    const value = String(text ?? "");
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(value).catch(() => fallbackCopy(value));
+        return true;
+      }
+    } catch (e) { /* 兼容路径 */ }
+    return fallbackCopy(value);
+  },
+
+  applyDark: (isDark) => {
+    document.documentElement.dataset.theme = isDark ? "dark" : "light";
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute("content", isDark ? "#1a1622" : "#efe7f6");
+    }
+    return true;
+  },
+
+  clockInfo: () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const h = now.getHours();
+    let greeting = "夜安";
+    if (h >= 5 && h < 11) greeting = "早安";
+    else if (h >= 11 && h < 14) greeting = "午安";
+    else if (h >= 14 && h < 18) greeting = "下午好";
+    else if (h >= 18 && h < 23) greeting = "晚安";
+    return {
+      time: `${pad(h)}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`,
+      hour: h,
+      greeting,
+      date: `${now.getMonth() + 1} 月 ${now.getDate()} 日`
+    };
+  },
+
+  load: (key) => {
+    try {
+      const raw = localStorage.getItem("romance:" + key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  },
+
+  save: (key, value) => {
+    try {
+      localStorage.setItem("romance:" + key, JSON.stringify(value));
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+};
+
+/* ============================================================
+   编译并挂载
+   ============================================================ */
+const appRoot = document.getElementById("app");
+const sourceNode = document.getElementById("jlc-source");
+
+try {
+  const program = JLC.compile(sourceNode.textContent, { sourceName: "romance-studio.jlc" });
+
+  const handle = program.mount(appRoot, {
+    policy: "strict",
+    fault: "degrade",
+    isolation: "strict",
+    capabilities,
+    onError: (error) => console.error(error)
+  });
+
+  handle.call("initApp");
+
+  // 主题恢复后同步 html 上的 dataset
+  const savedTheme = capabilities.load("themeName");
+  if (savedTheme) {
+    document.documentElement.dataset.theme =
+      (savedTheme === "夜色") ? "dark" : "light";
+  }
+
+  window.addEventListener("pagehide", () => handle.unmount(), { once: true });
+
+  window.__app = handle;
+  window.__program = program;
+} catch (error) {
+  console.error(error);
+  const pre = document.createElement("pre");
+  pre.style.cssText = "margin:24px;padding:20px;font-family:monospace;white-space:pre-wrap;border-radius:20px;background:#fdf9ff;color:#2c2438";
+  pre.textContent = "加载失败\n" + (error && error.message ? error.message : String(error));
+  appRoot.appendChild(pre);
+}
+</script>
+
+</body>
+</html>
