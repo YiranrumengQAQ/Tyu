@@ -1,0 +1,1576 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<meta name="theme-color" content="#efe7f6" />
+<meta name="description" content="心语笺 —— 在字里行间，遇见一句温柔的话。" />
+<title>心语笺 · 温柔语录</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%23ff8fab'/%3E%3Cpath d='M16 23c-5-3.2-7.5-6-7.5-9.2A4.3 4.3 0 0 1 16 11a4.3 4.3 0 0 1 7.5 2.8C23.5 17 21 19.8 16 23z' fill='%23fff'/%3E%3C/svg%3E" />
+
+<style>
+  /* ============================================================
+     设计令牌 · 黏土拟物
+     ============================================================ */
+  :root {
+    color-scheme: light;
+
+    --clay-bg:      #efe7f6;
+    --clay-surface: #fdf9ff;
+    --clay-light:   #ffffff;
+    --clay-dark:    #e0d3ee;
+    --clay-inset:   #f4ecfa;
+
+    --clay-shadow:    rgba(176, 152, 202, .42);
+    --clay-highlight: rgba(255, 255, 255, .96);
+    --clay-shade:     rgba(120, 92, 150, .13);
+
+    --ink:   #2c2438;
+    --ink-2: #4a3f5c;
+    --muted: #8d80a3;
+    --hair:  rgba(120, 92, 150, .12);
+
+    --accent:      #ff8fab;
+    --accent-ink:  #ffffff;
+
+    --radius-xl: 40px;
+    --radius-lg: 30px;
+    --radius-md: 22px;
+    --radius-sm: 16px;
+
+    --font-serif: "Noto Serif SC", "Songti SC", "STSong", "SimSun", Georgia, "Times New Roman", serif;
+    --font-sans:  ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+    --font-mono:  ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --ease-clay: cubic-bezier(.34, 1.36, .64, 1);
+  }
+
+  html[data-theme="dark"] {
+    color-scheme: dark;
+
+    --clay-bg:      #1a1622;
+    --clay-surface: #251f31;
+    --clay-light:   #332b42;
+    --clay-dark:    #17121f;
+    --clay-inset:   #1e1929;
+
+    --clay-shadow:    rgba(0, 0, 0, .55);
+    --clay-highlight: rgba(255, 255, 255, .055);
+    --clay-shade:     rgba(0, 0, 0, .35);
+
+    --ink:   #f3eefb;
+    --ink-2: #cfc4e2;
+    --muted: #938aa8;
+    --hair:  rgba(255, 255, 255, .07);
+  }
+
+  /* ============================================================
+     基础
+     ============================================================ */
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html { -webkit-text-size-adjust: 100%; }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.7;
+    color: var(--ink);
+    background-color: var(--clay-bg);
+    background-image:
+      radial-gradient(circle at 12% 8%,  color-mix(in srgb, var(--accent) 26%, transparent), transparent 42%),
+      radial-gradient(circle at 88% 14%, rgba(184, 164, 255, .34), transparent 44%),
+      radial-gradient(circle at 50% 96%, rgba(111, 212, 192, .26), transparent 48%);
+    background-attachment: fixed;
+    overflow-x: hidden;
+    transition: background-color .55s ease, color .55s ease;
+  }
+
+  button, input, textarea, select { font-family: inherit; }
+
+  ::selection { background: var(--accent); color: var(--accent-ink); }
+
+  /* 背景漂浮花瓣 */
+  .petals { position: fixed; inset: 0; pointer-events: none; z-index: 0; overflow: hidden; }
+  .petal {
+    position: absolute;
+    top: -8vh;
+    width: 22px; height: 22px;
+    opacity: .5;
+    color: var(--accent);
+    animation: drift linear infinite;
+    will-change: transform;
+  }
+  .petal svg { width: 100%; height: 100%; display: block; fill: currentColor; }
+  .petal:nth-child(1) { left: 6%;  animation-duration: 22s; animation-delay: -2s;  transform: scale(.7); }
+  .petal:nth-child(2) { left: 19%; animation-duration: 27s; animation-delay: -9s;  transform: scale(1); }
+  .petal:nth-child(3) { left: 33%; animation-duration: 19s; animation-delay: -14s; transform: scale(.55); }
+  .petal:nth-child(4) { left: 47%; animation-duration: 31s; animation-delay: -5s;  transform: scale(.85); }
+  .petal:nth-child(5) { left: 62%; animation-duration: 24s; animation-delay: -18s; transform: scale(.65); }
+  .petal:nth-child(6) { left: 76%; animation-duration: 29s; animation-delay: -11s; transform: scale(.95); }
+  .petal:nth-child(7) { left: 89%; animation-duration: 21s; animation-delay: -21s; transform: scale(.6); }
+
+  @keyframes drift {
+    0%   { transform: translate3d(0, -8vh, 0) rotate(0deg); opacity: 0; }
+    10%  { opacity: .5; }
+    90%  { opacity: .45; }
+    100% { transform: translate3d(6vw, 110vh, 0) rotate(320deg); opacity: 0; }
+  }
+
+  /* ============================================================
+     图标
+     ============================================================ */
+  .sprite { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+  .icon {
+    width: 22px; height: 22px;
+    flex: 0 0 auto;
+    display: block;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .icon--sm { width: 17px; height: 17px; }
+  .icon--lg { width: 30px; height: 30px; }
+  .icon--xl { width: 46px; height: 46px; }
+  .icon--fill { fill: currentColor; stroke: none; }
+
+  /* ============================================================
+     开场加载
+     ============================================================ */
+  .boot {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background-color: var(--clay-bg);
+    background-image:
+      radial-gradient(circle at 30% 30%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 50%),
+      radial-gradient(circle at 70% 70%, rgba(184, 164, 255, .3), transparent 50%);
+    transition: opacity .6s ease, visibility .6s ease;
+  }
+  .boot--done { opacity: 0; visibility: hidden; }
+
+  .boot-card {
+    padding: 46px 52px 40px;
+    text-align: center;
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    border-radius: var(--radius-xl);
+    box-shadow:
+      16px 16px 40px var(--clay-shadow),
+      -12px -12px 32px var(--clay-highlight),
+      inset -4px -4px 12px var(--clay-shade),
+      inset 4px 4px 12px var(--clay-highlight);
+    animation: bootIn .6s var(--ease-clay) both;
+  }
+  @keyframes bootIn {
+    from { opacity: 0; transform: translateY(26px) scale(.94); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .boot-hearts { display: flex; justify-content: center; gap: 14px; margin-bottom: 26px; }
+  .boot-hearts i {
+    display: grid;
+    place-items: center;
+    width: 46px; height: 46px;
+    color: #fff;
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    border-radius: 16px;
+    box-shadow:
+      6px 6px 14px var(--clay-shadow),
+      -5px -5px 12px var(--clay-highlight),
+      inset -2px -2px 6px var(--clay-shade);
+    animation: heartbeat 1.5s var(--ease-clay) infinite;
+  }
+  .boot-hearts i:nth-child(1) { color: #ff8fab; animation-delay: 0s; }
+  .boot-hearts i:nth-child(2) { color: #b8a4ff; animation-delay: .16s; }
+  .boot-hearts i:nth-child(3) { color: #6fd4c0; animation-delay: .32s; }
+  @keyframes heartbeat {
+    0%, 100% { transform: translateY(0) scale(1); }
+    35%      { transform: translateY(-9px) scale(1.09); }
+  }
+
+  .boot-title {
+    margin: 0 0 8px;
+    font-family: var(--font-serif);
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: .22em;
+  }
+  .boot-sub {
+    margin: 0 0 28px;
+    font-size: .82rem;
+    letter-spacing: .1em;
+    color: var(--muted);
+  }
+  .boot-track {
+    width: min(260px, 62vw);
+    height: 12px;
+    margin: 0 auto;
+    background: var(--clay-inset);
+    border-radius: 999px;
+    box-shadow:
+      inset 3px 3px 7px var(--clay-shade),
+      inset -3px -3px 7px var(--clay-highlight);
+    overflow: hidden;
+  }
+  .boot-track i {
+    display: block;
+    height: 100%;
+    width: 0;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #ff8fab, #b8a4ff, #6fd4c0);
+    animation: bootFill 1.4s cubic-bezier(.5, 0, .25, 1) forwards;
+  }
+  @keyframes bootFill { to { width: 100%; } }
+
+  /* ============================================================
+     黏土基础件
+     ============================================================ */
+  .clay {
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    border-radius: var(--radius-lg);
+    box-shadow:
+      12px 12px 30px var(--clay-shadow),
+      -10px -10px 26px var(--clay-highlight),
+      inset -3px -3px 9px var(--clay-shade),
+      inset 3px 3px 9px var(--clay-highlight);
+  }
+
+  .clay-inset {
+    background: var(--clay-inset);
+    border-radius: var(--radius-md);
+    box-shadow:
+      inset 6px 6px 14px var(--clay-shade),
+      inset -6px -6px 14px var(--clay-highlight);
+  }
+
+  /* 按钮 */
+  .btn {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 9px;
+    padding: 13px 22px;
+    font-size: .8rem;
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--ink-2);
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    border: none;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    box-shadow:
+      7px 7px 16px var(--clay-shadow),
+      -6px -6px 14px var(--clay-highlight),
+      inset -2px -2px 6px var(--clay-shade),
+      inset 2px 2px 6px var(--clay-highlight);
+    transition: box-shadow .16s var(--ease-clay), transform .16s var(--ease-clay), color .2s ease;
+  }
+  .btn:hover:not(:disabled) { color: var(--ink); transform: translateY(-2px); }
+  .btn:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow:
+      inset 6px 6px 13px var(--clay-shade),
+      inset -6px -6px 13px var(--clay-highlight);
+  }
+  .btn:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+  .btn:disabled { opacity: .42; cursor: not-allowed; }
+
+  .btn--accent {
+    color: var(--accent-ink);
+    background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 78%, #fff), var(--accent));
+    box-shadow:
+      7px 7px 18px color-mix(in srgb, var(--accent) 42%, transparent),
+      -6px -6px 16px var(--clay-highlight),
+      inset -2px -2px 7px rgba(0, 0, 0, .12),
+      inset 2px 2px 7px rgba(255, 255, 255, .45);
+  }
+  .btn--accent:active:not(:disabled) {
+    box-shadow:
+      inset 6px 6px 13px rgba(0, 0, 0, .18),
+      inset -5px -5px 12px rgba(255, 255, 255, .3);
+  }
+
+  .btn--icon { padding: 13px; }
+  .btn--sm { padding: 9px 14px; font-size: .72rem; border-radius: var(--radius-sm); gap: 7px; }
+  .btn--sm.btn--icon { padding: 9px; }
+  .btn--sm .icon { width: 17px; height: 17px; }
+
+  /* 药丸 */
+  .pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 16px;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    color: var(--muted);
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    border: none;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+    box-shadow:
+      5px 5px 12px var(--clay-shadow),
+      -4px -4px 10px var(--clay-highlight),
+      inset -2px -2px 5px var(--clay-shade),
+      inset 2px 2px 5px var(--clay-highlight);
+    transition: box-shadow .16s var(--ease-clay), color .2s ease, transform .16s var(--ease-clay);
+  }
+  .pill:hover { color: var(--ink-2); transform: translateY(-1px); }
+  .pill:active { box-shadow: inset 5px 5px 11px var(--clay-shade), inset -5px -5px 11px var(--clay-highlight); }
+  .pill--on {
+    color: var(--accent-ink);
+    background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 74%, #fff), var(--accent));
+    box-shadow:
+      5px 5px 14px color-mix(in srgb, var(--accent) 40%, transparent),
+      -4px -4px 10px var(--clay-highlight),
+      inset -2px -2px 6px rgba(0, 0, 0, .14),
+      inset 2px 2px 6px rgba(255, 255, 255, .4);
+  }
+  .pill--on:active { box-shadow: inset 5px 5px 11px rgba(0, 0, 0, .2), inset -4px -4px 10px rgba(255, 255, 255, .28); }
+  .pill:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent) 70%, transparent); outline-offset: 3px; }
+
+  /* ============================================================
+     页面骨架
+     ============================================================ */
+  .page {
+    position: relative;
+    z-index: 1;
+    max-width: 900px;
+    margin: 0 auto;
+    padding: clamp(18px, 3vw, 40px) clamp(14px, 3vw, 28px) clamp(40px, 6vw, 80px);
+    display: flex;
+    flex-direction: column;
+    gap: clamp(18px, 2.6vw, 30px);
+    animation: pageIn .8s var(--ease-clay) both;
+  }
+  @keyframes pageIn {
+    from { opacity: 0; transform: translateY(22px); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  /* ---------- 顶栏 ---------- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 16px 20px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    box-shadow:
+      12px 12px 30px var(--clay-shadow),
+      -10px -10px 26px var(--clay-highlight),
+      inset -3px -3px 9px var(--clay-shade),
+      inset 3px 3px 9px var(--clay-highlight);
+  }
+
+  .brand { display: flex; align-items: center; gap: 15px; min-width: 0; }
+
+  .brand-mark {
+    display: grid;
+    place-items: center;
+    width: 54px; height: 54px;
+    flex: 0 0 auto;
+    color: var(--accent-ink);
+    background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 76%, #fff), var(--accent));
+    border-radius: 19px;
+    box-shadow:
+      6px 6px 16px color-mix(in srgb, var(--accent) 42%, transparent),
+      -5px -5px 13px var(--clay-highlight),
+      inset -2px -2px 7px rgba(0, 0, 0, .14),
+      inset 2px 2px 7px rgba(255, 255, 255, .42);
+    transform: rotate(-5deg);
+    transition: transform .5s var(--ease-clay);
+  }
+  .topbar:hover .brand-mark { transform: rotate(5deg) scale(1.05); }
+
+  .brand-text { min-width: 0; }
+  .brand-title {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.24rem;
+    font-weight: 700;
+    letter-spacing: .16em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .brand-sub {
+    margin: 2px 0 0;
+    font-size: .72rem;
+    letter-spacing: .1em;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .topbar-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 8px 15px;
+    font-size: .72rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: var(--accent-ink);
+    background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 74%, #fff), var(--accent));
+    border-radius: 999px;
+    box-shadow:
+      5px 5px 13px color-mix(in srgb, var(--accent) 38%, transparent),
+      -4px -4px 11px var(--clay-highlight),
+      inset -2px -2px 6px rgba(0, 0, 0, .13),
+      inset 2px 2px 6px rgba(255, 255, 255, .38);
+    white-space: nowrap;
+  }
+  .badge .icon { width: 14px; height: 14px; }
+
+  /* ---------- 主卡片 ---------- */
+  .stage {
+    position: relative;
+    padding: clamp(30px, 5vw, 54px) clamp(24px, 5vw, 56px) clamp(26px, 4vw, 44px);
+    border-radius: var(--radius-xl);
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    box-shadow:
+      18px 18px 44px var(--clay-shadow),
+      -14px -14px 36px var(--clay-highlight),
+      inset -4px -4px 13px var(--clay-shade),
+      inset 4px 4px 13px var(--clay-highlight);
+    overflow: hidden;
+  }
+
+  .stage-glow {
+    position: absolute;
+    inset: -30% -20% auto -20%;
+    height: 70%;
+    border-radius: 50%;
+    background: radial-gradient(circle, color-mix(in srgb, var(--accent) 34%, transparent), transparent 68%);
+    filter: blur(38px);
+    pointer-events: none;
+    transition: background .7s ease;
+  }
+
+  .stage-quote-mark {
+    position: relative;
+    display: block;
+    width: 46px; height: 46px;
+    margin-bottom: 18px;
+    color: color-mix(in srgb, var(--accent) 82%, transparent);
+    transition: color .6s ease;
+  }
+
+  .stage-body { position: relative; }
+
+  .quote-line {
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: clamp(1.32rem, 4.4vw, 2.05rem);
+    font-weight: 600;
+    line-height: 1.72;
+    letter-spacing: .04em;
+    color: var(--ink);
+    min-height: 1.72em;
+    word-break: break-word;
+    text-wrap: pretty;
+    cursor: pointer;
+  }
+
+  .caret {
+    display: inline-block;
+    width: 3px;
+    height: 1em;
+    margin-left: 4px;
+    vertical-align: -.12em;
+    border-radius: 2px;
+    background: var(--accent);
+    animation: blink 1s steps(2, start) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  .quote-meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+    margin-top: 26px;
+    padding-top: 22px;
+    border-top: 2px dashed var(--hair);
+  }
+
+  .quote-author {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: .84rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: var(--ink-2);
+  }
+  .quote-author .icon { width: 16px; height: 16px; color: var(--accent); }
+
+  .quote-cat {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 13px;
+    font-size: .68rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+    color: var(--accent-ink);
+    background: linear-gradient(150deg, color-mix(in srgb, var(--accent) 72%, #fff), var(--accent));
+    border-radius: 999px;
+    box-shadow:
+      4px 4px 10px color-mix(in srgb, var(--accent) 34%, transparent),
+      inset -2px -2px 5px rgba(0, 0, 0, .12),
+      inset 2px 2px 5px rgba(255, 255, 255, .34);
+  }
+
+  .quote-index {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: .68rem;
+    letter-spacing: .1em;
+    color: var(--muted);
+  }
+
+  /* 进度条 */
+  .progress-track {
+    position: relative;
+    height: 9px;
+    margin-top: 22px;
+    border-radius: 999px;
+    background: var(--clay-inset);
+    box-shadow:
+      inset 3px 3px 7px var(--clay-shade),
+      inset -3px -3px 7px var(--clay-highlight);
+    overflow: hidden;
+  }
+  .progress-fill {
+    display: block;
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 60%, #fff), var(--accent));
+    transition: width .12s linear, background .6s ease;
+  }
+
+  /* ---------- 操作区 ---------- */
+  .actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 18px 20px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    box-shadow:
+      12px 12px 30px var(--clay-shadow),
+      -10px -10px 26px var(--clay-highlight),
+      inset -3px -3px 9px var(--clay-shade),
+      inset 3px 3px 9px var(--clay-highlight);
+  }
+
+  /* ---------- 分类 ---------- */
+  .filters {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  .filters-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: .68rem;
+    font-weight: 800;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-right: 4px;
+  }
+
+  /* ---------- 心选 ---------- */
+  .fav {
+    padding: 22px 24px 26px;
+    border-radius: var(--radius-lg);
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    box-shadow:
+      12px 12px 30px var(--clay-shadow),
+      -10px -10px 26px var(--clay-highlight),
+      inset -3px -3px 9px var(--clay-shade),
+      inset 3px 3px 9px var(--clay-highlight);
+  }
+
+  .fav-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+  .fav-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0;
+    font-family: var(--font-serif);
+    font-size: 1.02rem;
+    font-weight: 700;
+    letter-spacing: .1em;
+  }
+  .fav-title .icon { color: var(--accent); }
+  .fav-count {
+    font-size: .72rem;
+    letter-spacing: .08em;
+    color: var(--muted);
+  }
+
+  .fav-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .fav-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    padding: 15px 17px;
+    border-radius: var(--radius-md);
+    background: var(--clay-inset);
+    box-shadow:
+      inset 5px 5px 12px var(--clay-shade),
+      inset -5px -5px 12px var(--clay-highlight);
+    animation: itemIn .4s var(--ease-clay) both;
+  }
+  @keyframes itemIn {
+    from { opacity: 0; transform: translateY(10px) scale(.98); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .fav-main { flex: 1 1 auto; min-width: 0; }
+  .fav-text {
+    margin: 0 0 7px;
+    font-family: var(--font-serif);
+    font-size: .92rem;
+    line-height: 1.68;
+    color: var(--ink);
+    word-break: break-word;
+  }
+  .fav-by {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    font-size: .68rem;
+    letter-spacing: .1em;
+    color: var(--muted);
+  }
+  .fav-by .icon { width: 13px; height: 13px; }
+  .fav-tools { display: flex; gap: 8px; flex: 0 0 auto; }
+
+  .fav-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    padding: 34px 18px;
+    text-align: center;
+    color: var(--muted);
+    font-size: .84rem;
+  }
+  .fav-empty .icon { color: color-mix(in srgb, var(--accent) 60%, transparent); }
+
+  .fav-foot {
+    display: flex;
+    justify-content: center;
+    margin-top: 16px;
+  }
+
+  /* ---------- 页脚 ---------- */
+  .footer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    padding-top: 6px;
+    font-size: .72rem;
+    letter-spacing: .07em;
+    color: var(--muted);
+    text-align: center;
+  }
+  .footer .dot { color: var(--accent); }
+  .clock {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 13px;
+    border-radius: 999px;
+    color: var(--ink-2);
+    background: var(--clay-inset);
+    box-shadow:
+      inset 3px 3px 7px var(--clay-shade),
+      inset -3px -3px 7px var(--clay-highlight);
+  }
+  .clock .icon { width: 13px; height: 13px; }
+
+  /* ---------- Toast ---------- */
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 28px;
+    z-index: 60;
+    display: inline-flex;
+    align-items: center;
+    gap: 11px;
+    max-width: calc(100vw - 36px);
+    padding: 14px 24px;
+    font-size: .82rem;
+    font-weight: 700;
+    letter-spacing: .04em;
+    color: var(--ink);
+    border-radius: var(--radius-md);
+    background: linear-gradient(150deg, var(--clay-light), var(--clay-dark));
+    box-shadow:
+      10px 10px 26px var(--clay-shadow),
+      -8px -8px 22px var(--clay-highlight),
+      inset -2px -2px 7px var(--clay-shade),
+      inset 2px 2px 7px var(--clay-highlight);
+    transform: translateX(-50%);
+    animation: toastIn .34s var(--ease-clay) both;
+  }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translate(-50%, 20px) scale(.94); }
+    to   { opacity: 1; transform: translate(-50%, 0) scale(1); }
+  }
+  .toast--ok    .icon { color: #48c78e; }
+  .toast--info  .icon { color: var(--accent); }
+  .toast--error .icon { color: #ff6b6b; }
+
+  /* ---------- 致命错误 ---------- */
+  .fatal {
+    margin: 40px auto;
+    max-width: 760px;
+    padding: 24px 26px;
+    font-family: var(--font-mono);
+    font-size: .78rem;
+    white-space: pre-wrap;
+    border-radius: var(--radius-lg);
+    background: var(--clay-surface);
+    box-shadow:
+      12px 12px 30px var(--clay-shadow),
+      -10px -10px 26px var(--clay-highlight);
+  }
+
+  /* ============================================================
+     响应式
+     ============================================================ */
+  @media (max-width: 720px) {
+    .page { gap: 16px; }
+    .topbar { padding: 14px 16px; gap: 12px; }
+    .brand-mark { width: 46px; height: 46px; border-radius: 16px; }
+    .brand-mark .icon { width: 26px; height: 26px; }
+    .brand-title { font-size: 1.06rem; letter-spacing: .12em; }
+    .brand-sub { font-size: .66rem; }
+    .badge { padding: 7px 12px; font-size: .66rem; }
+    .stage { padding: 28px 22px 24px; border-radius: 32px; }
+    .stage-quote-mark { width: 36px; height: 36px; margin-bottom: 14px; }
+    .quote-line { letter-spacing: .02em; }
+    .quote-meta { margin-top: 20px; padding-top: 18px; gap: 10px; }
+    .quote-index { margin-left: 0; width: 100%; }
+    .actions { padding: 15px 16px; gap: 10px; }
+    .btn { padding: 12px 17px; font-size: .75rem; }
+    .btn--sm { padding: 8px 12px; font-size: .68rem; }
+    .fav { padding: 18px 18px 22px; }
+    .fav-item { padding: 13px 14px; gap: 11px; }
+    .fav-text { font-size: .86rem; }
+    .toast { bottom: 18px; padding: 12px 18px; font-size: .78rem; }
+  }
+
+  @media (max-width: 420px) {
+    .actions { gap: 8px; }
+    .btn { padding: 11px 14px; font-size: .72rem; gap: 7px; }
+    .btn--sm { padding: 8px 10px; }
+    .filters { gap: 8px; }
+    .pill { padding: 7px 13px; font-size: .68rem; }
+    .quote-cat { font-size: .64rem; padding: 4px 11px; }
+    .fav-tools { flex-direction: column; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: .01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: .01ms !important;
+    }
+    .petals { display: none; }
+  }
+</style>
+
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem("romance-theme");
+      var prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+      document.documentElement.dataset.theme = saved || (prefersDark ? "dark" : "light");
+    } catch (e) {
+      document.documentElement.dataset.theme = "light";
+    }
+  })();
+</script>
+</head>
+
+<body>
+
+<!-- ============================================================
+     图标库
+     ============================================================ -->
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-heart" viewBox="0 0 24 24">
+    <path d="M20.8 6.6a5.2 5.2 0 0 0-8.8-2.1A5.2 5.2 0 0 0 3.2 6.6c0 4.5 5.2 8 8.8 11.4 3.6-3.4 8.8-6.9 8.8-11.4z"/>
+  </symbol>
+  <symbol id="i-heart-fill" viewBox="0 0 24 24">
+    <path d="M20.8 6.6a5.2 5.2 0 0 0-8.8-2.1A5.2 5.2 0 0 0 3.2 6.6c0 4.5 5.2 8 8.8 11.4 3.6-3.4 8.8-6.9 8.8-11.4z" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-quote" viewBox="0 0 24 24">
+    <path d="M9.5 5.5C6.5 5.5 4 8 4 11v6a1.5 1.5 0 0 0 1.5 1.5h4A1.5 1.5 0 0 0 11 17v-4a1.5 1.5 0 0 0-1.5-1.5H8c0-1.9 1.1-3 2.4-3.4a.75.75 0 0 0-.4-1.45z" fill="currentColor" stroke="none"/>
+    <path d="M19 5.5c-3 0-5.5 2.5-5.5 5.5v6A1.5 1.5 0 0 0 15 18.5h4A1.5 1.5 0 0 0 20.5 17v-4A1.5 1.5 0 0 0 19 11.5h-1.5c0-1.9 1.1-3 2.4-3.4A.75.75 0 0 0 19 5.5z" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-quill" viewBox="0 0 24 24">
+    <path d="M4 20c0-6 4-10 10-11"/>
+    <path d="M20 3.5c-3.5 1-6.5 3-8.5 6.5"/>
+    <path d="M20 3.5c1.5 6-2 11-8 12.5"/>
+    <path d="m9 16-3 4"/>
+  </symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24">
+    <rect width="13" height="13" x="8.5" y="8.5" rx="3"/>
+    <path d="M4.5 16A2.5 2.5 0 0 1 2 13.5v-9A2.5 2.5 0 0 1 4.5 2h9A2.5 2.5 0 0 1 16 4.5"/>
+  </symbol>
+  <symbol id="i-check" viewBox="0 0 24 24">
+    <path d="M20 6 9 17l-5-5"/>
+  </symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="4.2"/>
+    <path d="M12 2v2.4"/><path d="M12 19.6V22"/>
+    <path d="m4.6 4.6 1.7 1.7"/><path d="m17.7 17.7 1.7 1.7"/>
+    <path d="M2 12h2.4"/><path d="M19.6 12H22"/>
+    <path d="m6.3 17.7-1.7 1.7"/><path d="m19.4 4.6-1.7 1.7"/>
+  </symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24">
+    <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>
+  </symbol>
+  <symbol id="i-shuffle" viewBox="0 0 24 24">
+    <path d="M16 3h5v5"/><path d="M4 20 21 3"/>
+    <path d="M21 16v5h-5"/><path d="m15 15 6 6"/>
+    <path d="M4 4l5 5"/>
+  </symbol>
+  <symbol id="i-chevron-left" viewBox="0 0 24 24">
+    <path d="m15 18-6-6 6-6"/>
+  </symbol>
+  <symbol id="i-chevron-right" viewBox="0 0 24 24">
+    <path d="m9 18 6-6-6-6"/>
+  </symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24">
+    <circle cx="12" cy="12" r="9.2"/><path d="M12 6.6V12l3.6 2"/>
+  </symbol>
+  <symbol id="i-petal" viewBox="0 0 24 24">
+    <path d="M12 3c4 3.5 6.5 6.6 6.5 10a6.5 6.5 0 0 1-13 0C5.5 9.6 8 6.5 12 3z" fill="currentColor" stroke="none"/>
+  </symbol>
+  <symbol id="i-inbox" viewBox="0 0 24 24">
+    <path d="M22 12h-5.4l-1.6 2.6h-6L7.4 12H2"/>
+    <path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>
+  </symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24">
+    <path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z"/>
+    <path d="M12 9v4.4"/><path d="M12 17h.01"/>
+  </symbol>
+  <symbol id="i-x" viewBox="0 0 24 24">
+    <path d="M18 6 6 18"/><path d="m6 6 12 12"/>
+  </symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24">
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+    <path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>
+  </symbol>
+  <symbol id="i-feather" viewBox="0 0 24 24">
+    <path d="M20.2 3.8a5.5 5.5 0 0 0-7.8 0L4 12.2V20h7.8l8.4-8.4a5.5 5.5 0 0 0 0-7.8z"/>
+    <path d="M16 8 6.5 17.5"/><path d="M14.5 5.5 5 15"/>
+  </symbol>
+</svg>
+
+<!-- ============================================================
+     开场加载
+     ============================================================ -->
+<div class="boot" id="boot">
+  <div class="boot-card">
+    <div class="boot-hearts">
+      <i><svg class="icon icon--lg" aria-hidden="true"><use href="#i-heart-fill"/></svg></i>
+      <i><svg class="icon icon--lg" aria-hidden="true"><use href="#i-heart-fill"/></svg></i>
+      <i><svg class="icon icon--lg" aria-hidden="true"><use href="#i-heart-fill"/></svg></i>
+    </div>
+    <h2 class="boot-title">心语笺</h2>
+    <p class="boot-sub">正在为你翻开一页温柔</p>
+    <div class="boot-track"><i></i></div>
+  </div>
+</div>
+
+<!-- 背景花瓣 -->
+<div class="petals" aria-hidden="true">
+  <span class="petal"><svg viewBox="0 0 24 24"><use href="#i-petal"/></svg></span>
+  <span class="petal"><svg viewBox="0 0 24 24"><use href="#i-petal"/></svg></span>
+  <span class="petal"><svg viewBox="0 0 24 24"><use href="#i-petal"/></svg></span>
+  <span class="petal"><svg viewBox="0 0 24 24"><use href="#i-petal"/></svg></span>
+  <span class="petal"><svg viewBox="0 0 24 24"><use href="#i-petal"/></svg></span>
+  <span class="petal"><svg viewBox="0 0 24 24"><use href="#i-petal"/></svg></span>
+  <span class="petal"><svg viewBox="0 0 24 24"><use href="#i-petal"/></svg></span>
+</div>
+
+<!-- 应用挂载点 -->
+<div id="app"></div>
+
+<!-- ============================================================
+     页面逻辑
+     ============================================================ -->
+<script type="text/jlc" id="jlc-source">
+app RomanceStudio {
+  state theme = "light";
+  state quotes = [
+    { id: 1,  text: "你是我藏在心里的春天，每次想起，都会开花。", author: "佚名", category: "心动" },
+    { id: 2,  text: "世间所有的相遇，都是久别重逢。", author: "白落梅", category: "相遇" },
+    { id: 3,  text: "我想和你一起，看日出日落，看细水长流。", author: "佚名", category: "陪伴" },
+    { id: 4,  text: "你不用完美，你只要是你，就足够让我心动。", author: "佚名", category: "心动" },
+    { id: 5,  text: "我把星星摘下来给你，你说不如我眼里的光。", author: "佚名", category: "心动" },
+    { id: 6,  text: "风起了，我在想你；风停了，我还在想你。", author: "佚名", category: "思念" },
+    { id: 7,  text: "遇见你之后，我才知道，原来日子可以这么甜。", author: "佚名", category: "相遇" },
+    { id: 8,  text: "我想要的很简单，时光还在，你还在。", author: "佚名", category: "陪伴" },
+    { id: 9,  text: "你笑起来的样子，是我见过最好的风景。", author: "佚名", category: "心动" },
+    { id: 10, text: "如果思念有声音，你一定会被吵醒。", author: "佚名", category: "思念" },
+    { id: 11, text: "愿我如星君如月，夜夜流光相皎洁。", author: "范成大", category: "思念" },
+    { id: 12, text: "我的喜欢，藏在每一次偷偷看你的目光里。", author: "佚名", category: "心动" },
+    { id: 13, text: "山有木兮木有枝，心悦君兮君不知。", author: "越人歌", category: "思念" },
+    { id: 14, text: "往后余生，风雪是你，平淡是你，清贫也是你。", author: "佚名", category: "陪伴" },
+    { id: 15, text: "我们绕了这么一圈才遇到，我比谁都更明白你的重要。", author: "佚名", category: "相遇" },
+    { id: 16, text: "愿所有的后会有期，都是他日的别来无恙。", author: "佚名", category: "陪伴" }
+  ];
+
+  state currentIndex = 0;
+  state activeCategory = "全部";
+  state favorites = [];
+  state typedChars = 0;
+  state typing = false;
+  state typingToken = 0;
+  state toast = "";
+  state toastKind = "info";
+  state clock = "";
+  state visited = 1;
+
+  derive categories = ["全部", "心动", "相遇", "陪伴", "思念"];
+
+  derive categoryColors = {
+    "全部": "#ff8fab",
+    "心动": "#ff8fab",
+    "相遇": "#b8a4ff",
+    "陪伴": "#6fd4c0",
+    "思念": "#7aa7f0"
+  };
+
+  derive currentQuote = get(quotes, currentIndex, {
+    id: 0,
+    text: "点击下方按钮，遇见一句温柔的话。",
+    author: "心语笺",
+    category: "全部"
+  });
+
+  derive accent = get(categoryColors, currentQuote.category, "#ff8fab");
+
+  derive total = max(1, len(currentQuote.text));
+  derive displayText = slice(currentQuote.text, 0, typedChars);
+  derive progress = clamp(round(typedChars * 100 / total), 0, 100);
+  derive isFav = keep(favorites, currentQuote.id);
+  derive favCount = len(favorites);
+  derive quoteNumber = currentIndex + 1;
+  derive quoteTotal = len(quotes);
+  derive toastIcon = toastKind == "error" ? "#i-alert" : (toastKind == "ok" ? "#i-check" : "#i-heart-fill");
+
+  style ":root{--accent:" + accent + ";}";
+
+  action notify(message, kind = "info") {
+    toast = message;
+    toastKind = kind;
+    after (2000) {
+      if (toast == message) {
+        toast = "";
+      }
+    }
+  }
+
+  action setCategory(category) {
+    if (activeCategory == category) {
+      return;
+    }
+    activeCategory = category;
+    let count = len(quotes);
+    for (i in range(0, count)) {
+      let idx = (currentIndex + i) % count;
+      let q = get(quotes, idx);
+      if (q != null) {
+        if (category == "全部" || q.category == category) {
+          currentIndex = idx;
+          startTyping();
+          notify("已切换到「" + category + "」", "info");
+          return;
+        }
+      }
+    }
+    notify("这一类还没有句子", "info");
+  }
+
+  action step(direction) {
+    let count = len(quotes);
+    if (count == 0) {
+      return;
+    }
+    for (i in range(0, count)) {
+      let idx = (currentIndex + direction * (i + 1) + count * 64) % count;
+      let q = get(quotes, idx);
+      if (q != null) {
+        if (activeCategory == "全部" || q.category == activeCategory) {
+          currentIndex = idx;
+          visited += 1;
+          startTyping();
+          return;
+        }
+      }
+    }
+  }
+
+  action shuffle() {
+    let count = len(quotes);
+    if (count == 0) {
+      return;
+    }
+    let start = now() % count;
+    for (i in range(0, count)) {
+      let idx = (start + i) % count;
+      let q = get(quotes, idx);
+      if (q != null) {
+        if (activeCategory == "全部" || q.category == activeCategory) {
+          currentIndex = idx;
+          visited += 1;
+          startTyping();
+          notify("缘分已至", "ok");
+          return;
+        }
+      }
+    }
+  }
+
+  action startTyping() {
+    typingToken += 1;
+    let token = typingToken;
+    typedChars = 0;
+    typing = true;
+    tick(token);
+  }
+
+  action tick(token) {
+    if (token != typingToken) {
+      return;
+    }
+    if (typedChars < len(currentQuote.text)) {
+      typedChars += 1;
+      after (34) {
+        tick(token);
+      }
+    } else {
+      typing = false;
+    }
+  }
+
+  action finishTyping() {
+    typingToken += 1;
+    typedChars = len(currentQuote.text);
+    typing = false;
+  }
+
+  action toggleFavorite() {
+    if (isFav) {
+      let next = [];
+      for (f in favorites) {
+        if (f.id != currentQuote.id) {
+          next = append(next, f);
+        }
+      }
+      favorites = next;
+      notify("已从心选移除", "info");
+    } else {
+      favorites = append(favorites, currentQuote);
+      notify("已收入心选", "ok");
+    }
+  }
+
+  action loadFavorite(id) {
+    let count = len(quotes);
+    for (i in range(0, count)) {
+      let q = get(quotes, i);
+      if (q != null) {
+        if (q.id == id) {
+          currentIndex = i;
+          startTyping();
+          notify("已载入心选", "ok");
+          return;
+        }
+      }
+    }
+  }
+
+  action dropFavorite(id) {
+    let next = [];
+    for (f in favorites) {
+      if (f.id != id) {
+        next = append(next, f);
+      }
+    }
+    favorites = next;
+    notify("已移除", "info");
+  }
+
+  action clearFavorites() {
+    if (len(favorites) == 0) {
+      notify("心选还是空的", "info");
+      return;
+    }
+    favorites = [];
+    notify("心选已清空", "info");
+  }
+
+  action copyQuote() {
+    let payload = currentQuote.text + "  —— " + currentQuote.author;
+    if (copyText(payload)) {
+      notify("已复制这句温柔", "ok");
+    } else {
+      notify("复制失败，请手动选择", "error");
+    }
+  }
+
+  action toggleTheme() {
+    theme = theme == "dark" ? "light" : "dark";
+    applyTheme(theme);
+    notify(theme == "dark" ? "已进入夜色" : "已回到晨光", "info");
+  }
+
+  action startClock() {
+    clock = currentTime();
+    every (1000) {
+      clock = currentTime();
+    }
+  }
+
+  action begin() {
+    startTyping();
+  }
+
+  view {
+    div(class = "page") {
+
+      /* ---------------- 顶栏 ---------------- */
+      header(class = "topbar") {
+        div(class = "brand") {
+          div(class = "brand-mark") {
+            svg(class = "icon icon--lg", aria:hidden = "true") {
+              use(href = "#i-feather");
+            }
+          }
+          div(class = "brand-text") {
+            h1(class = "brand-title") { text "心语笺"; }
+            p(class = "brand-sub") { text "纸短情长 · 一字一句" }
+          }
+        }
+        div(class = "topbar-actions") {
+          span(class = "badge", title = "当前心境") {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart-fill"); }
+            span { text currentQuote.category; }
+          }
+          button(
+            class = "btn btn--icon",
+            title = "切换昼夜",
+            aria:label = "切换昼夜",
+            on:click = { toggleTheme(); }
+          ) {
+            when (theme == "dark") {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-sun"); }
+            } else {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-moon"); }
+            }
+          }
+        }
+      }
+
+      /* ---------------- 主舞台 ---------------- */
+      section(class = "stage") {
+        span(class = "stage-glow", aria:hidden = "true");
+
+        span(class = "stage-quote-mark", aria:hidden = "true") {
+          svg(class = "icon icon--xl icon--fill", style = { width: "100%", height: "100%" }) {
+            use(href = "#i-quote");
+          }
+        }
+
+        div(class = "stage-body") {
+          p(
+            class = "quote-line",
+            on:click = { finishTyping(); },
+            title = "点击立即显示全文"
+          ) {
+            text displayText;
+            when (typing) {
+              span(class = "caret", aria:hidden = "true");
+            }
+          }
+
+          div(class = "quote-meta") {
+            span(class = "quote-author") {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-quill"); }
+              span { text currentQuote.author; }
+            }
+            span(class = "quote-cat") { text currentQuote.category; }
+            span(class = "quote-index") {
+              text string(quoteNumber) + " / " + string(quoteTotal);
+            }
+          }
+
+          div(class = "progress-track", aria:hidden = "true") {
+            /* 已修正：对象字面量使用冒号，宽度用 style:width 单属性写法 */
+            div(class = "progress-fill", style:width = progress + "%");
+          }
+        }
+      }
+
+      /* ---------------- 操作 ---------------- */
+      section(class = "actions") {
+        button(
+          class = "btn",
+          title = "上一句",
+          aria:label = "上一句",
+          on:click = { step(-1); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-chevron-left"); }
+          span { text "上一句"; }
+        }
+
+        button(
+          class = "btn btn--accent",
+          title = "随机一句",
+          aria:label = "随机一句",
+          on:click = { shuffle(); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-shuffle"); }
+          span { text "换一句"; }
+        }
+
+        when (isFav) {
+          button(
+            class = "btn",
+            title = "从心选移除",
+            aria:label = "取消收藏",
+            on:click = { toggleFavorite(); }
+          ) {
+            svg(class = "icon icon--fill", aria:hidden = "true") { use(href = "#i-heart-fill"); }
+            span { text "已收藏"; }
+          }
+        } else {
+          button(
+            class = "btn",
+            title = "收入心选",
+            aria:label = "收藏",
+            on:click = { toggleFavorite(); }
+          ) {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart"); }
+            span { text "收藏"; }
+          }
+        }
+
+        button(
+          class = "btn btn--icon",
+          title = "复制这句",
+          aria:label = "复制",
+          on:click = { copyQuote(); }
+        ) {
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-copy"); }
+        }
+
+        button(
+          class = "btn",
+          title = "下一句",
+          aria:label = "下一句",
+          on:click = { step(1); }
+        ) {
+          span { text "下一句"; }
+          svg(class = "icon", aria:hidden = "true") { use(href = "#i-chevron-right"); }
+        }
+      }
+
+      /* ---------------- 分类 ---------------- */
+      nav(class = "filters", aria:label = "语录分类") {
+        span(class = "filters-label") {
+          svg(class = "icon icon--sm", aria:hidden = "true") { use(href = "#i-petal"); }
+          span { text "心境"; }
+        }
+        each (cat in categories key cat) {
+          button(
+            class = "pill" + (activeCategory == cat ? " pill--on" : ""),
+            on:click = { setCategory(cat); }
+          ) {
+            text cat;
+          }
+        }
+      }
+
+      /* ---------------- 心选 ---------------- */
+      section(class = "fav") {
+        header(class = "fav-head") {
+          h2(class = "fav-title") {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-heart-fill"); }
+            span { text "心选"; }
+          }
+          span(class = "fav-count") { text string(favCount) + " 句" }
+        }
+
+        when (favCount > 0) {
+          ul(class = "fav-list") {
+            each (item in favorites key item.id) {
+              li(class = "fav-item") {
+                div(class = "fav-main") {
+                  p(class = "fav-text") { text item.text; }
+                  span(class = "fav-by") {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-quill"); }
+                    span { text item.author; }
+                  }
+                }
+                div(class = "fav-tools") {
+                  button(
+                    class = "btn btn--sm btn--icon",
+                    title = "载入这一句",
+                    aria:label = "载入",
+                    on:click = { loadFavorite(item.id); }
+                  ) {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-upload"); }
+                  }
+                  button(
+                    class = "btn btn--sm btn--icon",
+                    title = "移除",
+                    aria:label = "移除",
+                    on:click = { dropFavorite(item.id); }
+                  ) {
+                    svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+                  }
+                }
+              }
+            }
+          }
+        } else {
+          div(class = "fav-empty") {
+            svg(class = "icon icon--xl", aria:hidden = "true") { use(href = "#i-inbox"); }
+            span { text "还没有收藏的句子 · 遇见喜欢的，点一下爱心" }
+          }
+        }
+
+        when (favCount > 1) {
+          footer(class = "fav-foot") {
+            button(
+              class = "btn btn--sm",
+              on:click = { clearFavorites(); }
+            ) {
+              svg(class = "icon", aria:hidden = "true") { use(href = "#i-x"); }
+              span { text "清空心选"; }
+            }
+          }
+        }
+      }
+
+      /* ---------------- 页脚 ---------------- */
+      footer(class = "footer") {
+        span { text "第 " + string(quoteNumber) + " 句 / 共 " + string(quoteTotal) + " 句" }
+        span(class = "dot") { text "·" }
+        span { text "已阅 " + string(visited) + " 句" }
+        when (clock != "") {
+          span(class = "dot") { text "·" }
+          span(class = "clock") {
+            svg(class = "icon", aria:hidden = "true") { use(href = "#i-clock"); }
+            span { text clock; }
+          }
+        }
+      }
+
+      /* ---------------- Toast ---------------- */
+      when (toast != "") {
+        div(class = "toast toast--" + toastKind, attr:role = "status") {
+          svg(class = "icon", aria:hidden = "true") { use(href = toastIcon); }
+          span { text toast; }
+        }
+      }
+
+    }
+  }
+}
+</script>
+
+<script type="module">
+import JLC from "./jlc.js";
+
+/* ------------------------------------------------------------
+   宿主能力：内核无法实现的部分
+   ------------------------------------------------------------ */
+
+function fallbackCopy(text) {
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.top = "-1000px";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    area.setSelectionRange(0, area.value.length);
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+const capabilities = {
+  copyText: (text) => {
+    const value = String(text ?? "");
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(value).catch(() => fallbackCopy(value));
+        return true;
+      }
+    } catch (error) {
+      /* 兼容路径 */
+    }
+    return fallbackCopy(value);
+  },
+
+  applyTheme: (value) => {
+    const next = String(value ?? "") === "dark" ? "dark" : "light";
+    document.documentElement.dataset.theme = next;
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", next === "dark" ? "#1a1622" : "#efe7f6");
+    try {
+      localStorage.setItem("romance-theme", next);
+    } catch (error) {
+      /* 隐私模式忽略 */
+    }
+    return next;
+  },
+
+  currentTime: () => {
+    const now = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+  },
+
+  keep: (list, id) => {
+    if (!Array.isArray(list)) return false;
+    for (const item of list) {
+      if (item && item.id === id) return true;
+    }
+    return false;
+  }
+};
+
+/* ------------------------------------------------------------
+   启动
+   ------------------------------------------------------------ */
+
+const boot = document.getElementById("boot");
+const appRoot = document.getElementById("app");
+const sourceNode = document.getElementById("jlc-source");
+const startedAt = performance.now();
+
+function dismissBoot() {
+  const elapsed = performance.now() - startedAt;
+  const wait = Math.max(0, 1350 - elapsed);
+  window.setTimeout(() => {
+    if (!boot) return;
+    boot.classList.add("boot--done");
+    window.setTimeout(() => boot.remove(), 700);
+  }, wait);
+}
+
+function renderFatal(error) {
+  appRoot.textContent = "";
+  const pre = document.createElement("pre");
+  pre.className = "fatal";
+  pre.textContent = "加载失败\n" + (error && error.message ? error.message : String(error));
+  appRoot.appendChild(pre);
+  dismissBoot();
+}
+
+try {
+  const sourceText = sourceNode.textContent;
+  const program = JLC.compile(sourceText, { sourceName: "romance-studio.jlc" });
+
+  const params = new URLSearchParams(location.search);
+  const policyParam = params.get("policy") ?? "strict";
+  let policyOption = policyParam;
+  if (policyParam.startsWith("{")) {
+    try { policyOption = JSON.parse(policyParam); } catch { /* 退回档名 */ }
+  }
+
+  const handle = program.mount(appRoot, {
+    policy: policyOption,
+    fault: params.get("fault") ?? "degrade",
+    isolation: params.get("isolation") ?? "strict",
+    state: {
+      theme: document.documentElement.dataset.theme === "dark" ? "dark" : "light"
+    },
+    capabilities,
+    onError: (error) => console.error(error)
+  });
+
+  handle.call("startClock");
+  handle.call("begin");
+
+  capabilities.applyTheme(document.documentElement.dataset.theme);
+
+  window.addEventListener("pagehide", () => handle.unmount(), { once: true });
+
+  window.__app = handle;
+  window.__program = program;
+
+  dismissBoot();
+} catch (error) {
+  console.error(error);
+  renderFatal(error);
+}
+</script>
+
+</body>
+</html>
