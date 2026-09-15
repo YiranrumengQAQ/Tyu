@@ -1,0 +1,65 @@
+/** @jlc-page
+ * title: 样式作用域 + 数据 URL
+ * summary: style 被前缀限定到本实例；data: 图片在 strict 下被中和成 about:blank，在 open 下照常显示
+ * policy: open
+ * isolation: soft
+ * capabilities:
+ * demo: 滑块只改插值进 style 的变量，style 会被前缀限定在本实例；切到 strict 后那张 data: 图片会被 sanitizer 换成 about:blank（url: 类接口不参与装载拒绝，除非 strictUrls），看右上角 neutralized 计数
+ */
+app PaletteLab {
+  state size = 96;
+  state hue = 210;
+  state radius = 14;
+  state pixels = 0;
+
+  derive swatch = "hsl(" + hue + " 72% 52%)";
+  derive badge = size + "px · hsl " + hue;
+  action tick(step) {
+    pixels = clamp(pixels + step, 0, 1000000);
+    return null;
+  }
+
+  style `
+    .palette { display: grid; gap: 14px; }
+    .palette-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .palette-chip {
+      width: 200px; height: 200px; display: grid; place-items: center;
+      border: 3px solid var(--ink); box-shadow: 6px 6px 0 var(--acc-5);
+      color: rgb(245, 245, 241); font: 700 12px / 1.4 ui-monospace, monospace;
+      background: repeating-conic-gradient(#0b0d12 0% 25%, #f5f5f1 0% 50%) 50% / 16px 16px;
+    }
+    .palette-chip i {
+      display: block; width: ${size}px; height: ${size}px;
+      background: ${swatch}; border-radius: ${radius}px;
+      transition: width 120ms ease-out, height 120ms ease-out;
+    }
+    .palette-row input[type="range"] { flex: 1; min-width: 120px; }
+    .palette-meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .palette-meta code { font: 600 12px ui-monospace, monospace; }
+    .palette-img { display: block; border: 2px solid var(--border); background: var(--surface); }
+  `;
+
+  view {
+    main(class = "palette") {
+      div(class = "palette-chip") {
+        i();
+      }
+      div(class = "palette-row") {
+        span { text "边长"; }
+        input(type = "range", min = 24, max = 180, bind:value = size, aria:label = "边长");
+        span { text "色相"; }
+        input(type = "range", min = 0, max = 360, bind:value = hue, aria:label = "色相");
+        span { text "圆角"; }
+        input(type = "range", min = 0, max = 100, bind:value = radius, aria:label = "圆角");
+      }
+      p(class = "palette-meta") {
+        code { text badge; }
+        button(on:click = { tick(1024); }) { text "记录 1 KB"; }
+        button(on:click = { tick(-1024); }) { text "扣减"; }
+        span(class = "muted") { text "累计 " + pixels + " 字节（只统计，不外发）"; }
+      }
+      img(class = "palette-img", src = "data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='40'%3E%3Crect width='200' height='40' fill='%2317b8a6'/%3E%3Ctext x='10' y='26' fill='white' font-size='14' font-family='monospace'%3Edata: URL%3C/text%3E%3C/svg%3E", alt = "data URL 画的横条", width = 200, height = 40);
+      p(class = "muted") { text "上面这张图的 src 是 data: URL：strict 策略下它会变成 about:blank。"; }
+    }
+  }
+}

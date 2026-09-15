@@ -243,9 +243,9 @@ test("optimizer folds constants and removes dead pure statements", () => {
   assert.ok(!text.includes('"never"'));
 });
 
-test("safety checks move from runtime to compile time", () => {
+test("safety checks: hard limits at compile time, policy at load time", () => {
   assert.throws(() => JLC.compile('app A { view { script { text "x"; } } }'), JLCCompileError);
-  assert.throws(() => JLC.compile('app A { view { div(prop:innerHTML = "x"); } }'), /安全模式禁止设置 DOM property/);
+  assert.throws(() => JLC.compile('app A { view { div(prop:innerHTML = "x"); } }'), /HTML 解析类 property 永禁/);
   assert.throws(() => JLC.compile('app A { view { div(attr:onclick = "x"); } }'), /禁止直接设置事件属性/);
   assert.throws(() => JLC.compile('app A { view { button(on:click.wat = { }); } }'), /未知的事件修饰符/);
   assert.throws(() => JLC.compile('app A { action a() { let x = 1; let x = 2; } view {} }'), /重复定义/);

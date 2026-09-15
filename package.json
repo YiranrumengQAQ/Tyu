@@ -1,6 +1,6 @@
 {
   "name": "@tyu/jlc-kernel",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "JLC: a dependency-free bytecode virtual machine and compiler for browser interfaces",
   "type": "module",
   "main": "./jlc.js",
@@ -36,7 +36,10 @@
   "sideEffects": false,
   "scripts": {
     "test": "node --test",
-    "check": "node --check jlc.js && node --check jlc-vm.js && node --check jlc-compiler.js && node --test"
+    "build:web": "node scripts/build-web.mjs",
+    "check:web": "node scripts/build-web.mjs --check",
+    "serve": "node scripts/serve-web.mjs",
+    "check": "node --check jlc.js && node --check jlc-vm.js && node --check jlc-compiler.js && node --check web/app-page.js && node --check web/console.js && node --check scripts/build-web.mjs && node --check scripts/serve-web.mjs && npm run check:web && node --test"
   },
   "keywords": [
     "jlc",

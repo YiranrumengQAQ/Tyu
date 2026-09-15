@@ -1,4 +1,4 @@
-# JBC — JLC Bytecode Specification 1.0
+# JBC — JLC Bytecode Specification 2.0
 
 JBC 是 JLC 语言的字节码格式与指令集，角色等同 Java 世界里的 class 文件 + JVM 指令集。
 编译器（`jlc-compiler.js`）把 JLC 源码编译为 JBC 模块；虚拟机（`jlc-vm.js`）负责
@@ -98,7 +98,7 @@ JLC source → Tokenizer → Parser → 优化器 → Code Generator ─┐
 | `BIND_VALUE` / `BIND_CHECKED` | F,F | 双向绑定：get effect + 事件回写（set 函数以新值为槽 0） |
 | `EVENT` | P(type), B(mods), F | `on:event.mods`，修饰符位掩码 prevent1 stop2 self4 once8 capture16 passive32；`$event` 快照在事件帧槽 0 |
 | `WHEN` | F,F,F | 条件分支：test/yes/no 三个函数 + 注释标记 + 作用域化重建 |
-| `EACH` | P×4,P,S,B,S | keyed 列表：iter/key/body/empty 函数、item 名称、槽位与 hasIndex |
+| `EACH` | F,F,F,F,P,S,B,S | 列表：iter/key/body/empty 四个**函数索引**（缺 key 或缺 else 时用 `NO_FUNC` = `0xFFFF`），随后 item 名常量、item 槽、hasIndex 位与 index 槽 |
 
 `ENTER_SCOPE` / `EXIT_SCOPE` 的职责被融合进 DOM 指令：每个元素、文本、when、
 each 记录都会创建子 Scope 并注册 deterministic 销毁，等价且不可跳过。
@@ -118,7 +118,7 @@ each 记录都会创建子 Scope 并注册 deterministic 销毁，等价且不�
 ```text
 offset  size  field
 0       4     magic        0x4A 0x4C 0x43 0x42 ("JLCB"，即 u32 0x4A4C4342)
-4       2     version      u16 = 1
+4       2     version      u16 = 2（解码接受 [1, 2]：1 是无 MANIFEST 段的旧容器）
 6       2     flags        u16 保留
 8       2     sectionCount u16
 随后每个段：
@@ -137,9 +137,17 @@ offset  size  field
 | 5 | DECLS 声明表 | u16 count；每项：kind u8（0 state/1 derive/2 resource/3 style）、name P、func u16 |
 | 6 | VIEW | view 函数索引 u16 |
 | 7 | META | app 名 P、sourceName 字符串（u32 长度 + UTF-8）、u16 保留 |
+| 8 | MANIFEST | u16 count；每项：u8 kind（0 tag / 1 frame / 2 url / 3 property / 4 attribute / 5 host / 6 window / 7 style / 8 capability）+ str detail |
 
 所有多字节整数大端（与 class 文件一致）。序列化是确定性的：同一份源码
 编译两次得到逐字节相同的 .jbc，适合做构建产物校验与增量分发。
+
+MANIFEST 是**申报**，不是权威：`verifyModule()` 用 `auditModule()` 从指令流重算清单并
+覆盖它（`module.requirements` = 重算结果），只允许申报「多报」——漏报任何一项都会
+`申报清单与指令流不一致，漏报接口：…` 载入失败。因此改写 MANIFEST 段既拿不到新权限，
+也藏不住已用到的接口。重编码是逐字节往返的：`encodeModule(loadModule(bytes))` 与
+原 `bytes` 相同。站点信息（`sites`）不进容器，只在解码期由 `auditModule` 现算，
+所以 .jbc 里没有源码位置泄漏。
 
 ## 4. 验证器（Bytecode Verifier）
 
@@ -153,8 +161,16 @@ offset  size  field
    操作数栈深度必须一致、不得下溢；跳转目标必须落在指令边界；
    `ELEM`/`ELEM_END` 必须在所有路径上配平。
 5. **结构引用**：action 指向 body 函数、声明指向 expr 函数、view 指向 view 函数。
+6. **操作数语义**：按 `OP_SPEC.operands` 逐位判定——`P` 必须落在常量池内、`R` 落在
+   全局引用表内、`F` 落在函数表内（`NO_FUNC` = `0xFFFF` 是合法的「无函数」哨兵，
+   `EACH` 的可选 key/empty 与参数默认值都用它）、`S` 在函数 `nSlots` 内。视图指令的
+   函数索引**不是**池下标，这条区分是 0.3 修掉的一处 verifier 误报（`each` 无 key 带
+   `else` 曾被判成「常量池索引越界」）。
+7. **接口清单**：`auditModule()` 从指令流重算 `requirements`，并与 MANIFEST 申报交叉
+   核对（见 §3）。这一步之后，装载期策略裁决只需查这张表。
 
-因此：手写或篡改的字节码在**载入期**即被拒绝，运行期循环可以信任指令流，
+因此：手写或篡改的字节码在**载入期**即被拒绝，运行期循环可以信任指令流（`maxStack`
+也在这里算出，供 `ledger().peakStack` 报告峰值栈深），
 不做多余的防御性检查——这正是沙箱隔离的静态半边；动态半边仍是
 sanitize/safeKey/无原型数据与 Scope 所有权。
 

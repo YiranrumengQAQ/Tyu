@@ -1,0 +1,74 @@
+/** @jlc-page
+ * title: JSON 浏览器（resource + data: 端点）
+ * summary: resource 的“装载/reload 才请求”语义；端点是 data: URL，离线可跑，同时演示 url:data 的策略门
+ * policy: open
+ * isolation: soft
+ * capabilities:
+ * demo: 重新载入只发一次请求；loading / error / 成功由 resource 快照驱动。strict 档仍然授予 host:http（清单里没有 url:data——端点是派生值，静态判不出），但写入时的 sanitizer 会把 data: URL 中和掉：看右上角 neutralized 计数与 error 徽章
+ */
+app JsonBrowser {
+  state picked = -1;
+
+  derive endpoint = "data:application/json;charset=utf-8,"
+    + "%7B%22app%22%3A%22jlc-playground%22%2C%22version%22%3A%220.3.0%22"
+    + "%2C%22profiles%22%3A%5B%7B%22name%22%3A%22strict%22%2C%22frames%22%3Afalse%2C%22dataUrls%22%3Afalse%7D"
+    + "%2C%7B%22name%22%3A%22open%22%2C%22frames%22%3Atrue%2C%22dataUrls%22%3Atrue%7D"
+    + "%2C%7B%22name%22%3A%22trusted%22%2C%22frames%22%3Atrue%2C%22dataUrls%22%3Atrue%7D%5D"
+    + "%2C%22surfaces%22%3A%5B%22tag%22%2C%22frame%22%2C%22url%22%2C%22property%22%2C%22attribute%22%2C%22host%22%2C%22window%22%2C%22style%22%2C%22capability%22%5D%7D";
+
+  resource docs = http(endpoint);
+
+  derive root = docs.data;
+  derive rows = root == null ? [] : entries(root);
+  derive count = len(rows);
+
+  action choose(index) {
+    picked = index;
+    return null;
+  }
+
+  style `
+    .json { display: grid; gap: 12px; }
+    .json-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+    table.json-table { width: 100%; border-collapse: collapse; font: 500 12px / 1.7 ui-monospace, monospace; }
+    .json-table th, .json-table td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .json-table thead th { background: var(--ink); color: var(--bg); font-family: var(--display); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+    .json-table tbody tr { cursor: pointer; }
+    .json-table tbody tr[data-picked="1"] td { background: var(--acc-4); }
+    .json-code { margin: 0; padding: 12px; overflow: auto; max-height: 280px; border: 2px solid var(--border); background: var(--code-bg); color: var(--code-ink); font: 500 11.5px / 1.7 ui-monospace, monospace; white-space: pre-wrap; word-break: break-all; }
+    .json-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .json-url { flex: 1; min-width: 200px; padding: 7px 9px; border: 2px solid var(--border); background: var(--field); color: var(--ink); font: 500 11px ui-monospace, monospace; }
+  `;
+
+  view {
+    main(class = "json") {
+      div(class = "json-bar") {
+        span(class = "mono") { text "GET " + endpoint; }
+      }
+      div(class = "json-bar") {
+        button(on:click = { reload(docs); }) { text "重新载入"; }
+        input(class = "json-url", value = endpoint, readonly = "readonly", aria:label = "端点 URL");
+        when (docs.loading) { span(class = "badge badge--warn") { text "loading…"; } }
+        when (docs.error != null) { span(class = "badge badge--stop") { text "error · " + docs.error.message; } }
+        when (docs.error == null) { span(class = "badge") { text "status " + docs.status + " · " + count + " 个顶层字段"; } }
+      }
+      div(class = "json-grid") {
+        table(class = "json-table") {
+          thead { tr { th { text "键"; } th { text "值"; } } }
+          tbody {
+            each (row, index in rows key row.key) {
+              tr(data:picked = picked == index ? 1 : 0, on:click = { choose(index); }) {
+                th { text row.key; }
+                td { text string(row.value); }
+              }
+            } else {
+              tr { td { text "还没有数据"; } }
+            }
+          }
+        }
+        pre(class = "json-code") { text json(root); }
+      }
+      p(class = "muted") { text "读取 docs.data 不会重复请求：只有装载与 reload() 触发 fetch。"; }
+    }
+  }
+}

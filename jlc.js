@@ -12,16 +12,29 @@
 
 import {
   VERSION,
+  ABI_VERSION,
+  BYTECODE_VERSION,
   JLCCompileError,
   JLCRuntimeError,
   JLCVerifyError,
+  JLCPolicyError,
+  JLCQuotaError,
+  JLCIsolationError,
   OP,
   OP_SPEC,
   encodeModule,
   decodeModule,
   loadModule,
   verifyModule,
+  auditModule,
   disassembleModule,
+  resolvePolicy,
+  checkPermissions,
+  policyViolation,
+  scopeStylesheet,
+  SECURITY_PROFILES,
+  POLICY_KEYS,
+  SYSCALLS,
   JLCProgram,
   VMKernel,
   createVMKernel,
@@ -31,16 +44,29 @@ import { tokenize, Parser, parseSource, optimizeProgram, compileAst, CompilerKer
 
 export {
   VERSION,
+  ABI_VERSION,
+  BYTECODE_VERSION,
   JLCCompileError,
   JLCRuntimeError,
   JLCVerifyError,
+  JLCPolicyError,
+  JLCQuotaError,
+  JLCIsolationError,
   OP,
   OP_SPEC,
   encodeModule,
   decodeModule,
   loadModule,
   verifyModule,
+  auditModule,
   disassembleModule,
+  resolvePolicy,
+  checkPermissions,
+  policyViolation,
+  scopeStylesheet,
+  SECURITY_PROFILES,
+  POLICY_KEYS,
+  SYSCALLS,
   createVMKernel,
   JLCVM,
   tokenize,
@@ -60,11 +86,22 @@ export class JLCKernel extends VMKernel {
     return parseSource(String(source), options);
   }
 
-  /** 编译：JLC 源码 → 优化 → 字节码模块（已验证）。 */
+  /** 编译：JLC 源码 → 优化 → 字节码模块（已验证 + 接口清单）。 */
   compile(source, options = {}) {
     const sourceName = options.sourceName ?? "<jlc>";
     const { module, ast } = compileAst(source, { ...options, sourceName });
     return new JLCProgram(this, module, { ast, source: String(source), sourceName });
+  }
+
+  /** 构建期策略预检：同一份 resolvePolicy + checkPermissions，编译器和 VM 共用。 */
+  checkPolicy(sourceOrProgram, policy) {
+    const module = sourceOrProgram instanceof JLCProgram ? sourceOrProgram.module : this.compile(String(sourceOrProgram)).module;
+    return checkPermissions(module.requirements ?? [], resolvePolicy(policy));
+  }
+
+  /** 可用策略档与全部可授予接口（管理台直接渲染）。 */
+  policies() {
+    return Object.keys(SECURITY_PROFILES).map((name) => ({ name, policy: resolvePolicy(name) }));
   }
 
   /** 反汇编程序或模块（调试视图）。 */
@@ -87,7 +124,9 @@ export class JLCKernel extends VMKernel {
 
   mount(sourceOrProgram, targetOrSelector, options = {}) {
     if (typeof sourceOrProgram === "string") {
-      return this.compile(sourceOrProgram, options).mount(targetOrSelector, options);
+      // 挂载期的 policy 由 VM 裁决（含 fault 档）；构建期预检请显式用 JLC.compile(src, { policy })。
+      const { policy, ...compileOptions } = options;
+      return this.compile(sourceOrProgram, { ...compileOptions, policyMode: "defer" }).mount(targetOrSelector, options);
     }
     return super.mount(sourceOrProgram, targetOrSelector, options);
   }

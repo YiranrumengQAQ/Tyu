@@ -1,4 +1,4 @@
-# JLC 0.2 Language and Kernel Specification
+# JLC 0.3 Language and Kernel Specification
 
 本文件描述 `jlc.js` 当前实现的可执行语义。关键字区分大小写，源文件使用 Unicode；标识符可以使用中文等 Unicode 字母。
 
@@ -90,7 +90,14 @@ each       = "each", "(", identifier, [ ",", identifier ],
 | `bind:checked = state` | checkbox 双向绑定 |
 | `on:click = { … }` | 生命周期事件动作 |
 
-事件修饰符：`prevent`、`stop`、`self`、`once`、`capture`、`passive`。事件动作中存在只读 `$event`：
+属性名前缀（`attr:` / `data:` / `aria:` / `prop:` / `style:` / `class:`）的后缀只接受标识符
+字符，翻译时冒号变成连字符：`data:picked` 写进 `data-picked`。带连字符的名字
+（`data-picked = …`）不是合法语法；`class:` 与 `style:` 的后缀同理，用 `-` 命名的类请改走
+`class = "…" ` 或 `class:name` 的下划线/驼峰别名。
+
+事件修饰符：`prevent`、`stop`、`self`、`once`、`capture`、`passive`、`window`（位掩码 1/2/4/8/16/32/64）。
+`on:resize.window` 与语法糖 `on:window:resize` 等价：监听器挂在 `window` 上，
+生命周期仍归该元素的 Scope，卸载时自动移除；需要 `allowWindowEvents`。事件动作中存在只读 `$event`：
 
 ```text
 { type, value, checked, key, code, button, x, y,
@@ -113,7 +120,8 @@ each       = "each", "(", identifier, [ ",", identifier ],
 4. 顺序变化移动该项的完整 DOM range；
 5. 重复 key 抛出运行时错误。
 
-不指定 key 时默认用索引。需要持久身份的动态列表应始终显式指定 key。
+不指定 key 时默认用索引。需要持久身份的动态列表应始终显式指定 key。`each` 的 `else`
+分支是独立的 empty 函数（`EACH` 的第 4 个操作数），与 `key` 无关：无 key 时同样工作。
 
 ## 5. 表达式
 
@@ -249,19 +257,126 @@ app scope
 - `unmount()` 幂等；返回后 `inspect()` 的所有资源计数必须为 0。
 - 卸载后的 handle 只保留静态名称和最终计数，不保留 DOM/runtime/environment。
 
-## 10. 安全边界
+## 10. 安全边界：策略、隔离域与 fault 档
 
-默认安全模式：
+安全模型分两层：托管方（沙箱框架、CSP、同源策略）决定页面能碰什么，JLC 策略层决定
+**应用能碰宿主的哪些接口**。后者不是 lint 建议，而是编译期预检 + 装载期裁决 + 写入期
+逐条把关的强制机制，三层共用同一份解析结果。
 
-- 不用 `eval`、`new Function`、`innerHTML`；
-- `text` 仅使用文本节点；
-- 禁止 `script`、`iframe`、`object`、`embed`、`base`、`meta` 元素；
-- 禁止 `on*` 字符串属性/property 以及 `innerHTML`、`outerHTML`、`srcdoc`，事件必须走 `on:*`；
-- `javascript:`、`vbscript:`、`data:text/html` URL 变成 `about:blank`；
-- 字段读取只读取安全自有字段，不沿原型链；
-- JLC 不能直接取得 Node、Window、Event 或原生函数。
+### 10.1 策略档与覆盖
 
-Capability 是明确的信任边界。内核净化其输入输出，但 capability 在宿主世界内部产生的全局副作用不受 JLC 生命周期控制。
+策略是一组冻结字段，由 `resolvePolicy(input)` 解析；`input` 是档名字符串，或
+`{ profile: "open", …覆盖项 }`。内置三档：
+
+| 字段 | `strict`（0.2 行为） | `open` | `trusted` |
+| --- | --- | --- | --- |
+| `urlSchemes` | `about: http: https: mailto: tel: sms: ftp: geo:` | 再含 `blob: data: srcdoc: magnet:` | 同 `open` |
+| `allowDataUrls` / `allowBlobUrls` | 否 | 是 | 是 |
+| `allowCustomElements` | 否 | 是 | 是 |
+| `allowSandboxedFrames`（iframe / srcdoc） | 否 | 是 | 是 |
+| `allowHtmlInjection`（富文本注入面） | 否 | 是 | 是 |
+| `allowWindowEvents`（`on:x.window`） | 否 | 是 | 是 |
+| `allowEventAttributes`（`on*` 字符串入口） | 否 | 否 | 否 |
+| `allowNetwork`（resource / `http()`） | 是 | 是 | 是 |
+| `allowNavigation` / `allowTimer` / `allowCustomEvents` / `allowDocumentTitle` | 是 | 是 | 是 |
+| `frameSandbox` | `""`（内核托管） | `allow-scripts allow-forms allow-popups` | 再加 `allow-modals allow-same-origin` |
+| `frameMinIntervalMs` | 16 | 4 | 0 |
+| `htmlMaxChars` | 0 | 262144 | 2097152 |
+| `maxDomNodes` | 4000 | 20000 | 60000 |
+| `maxStyleBytes` | 65536 | 131072 | 524288 |
+| `styleScoping` / `allowStyleScopingRelax` | `off` / 否 | `prefix` / 是 | `off` / 是 |
+| `blockedTags` | `script object embed base meta` | `script object embed base` | `script object embed base` |
+| `blockedProperties` | `innerHTML outerHTML srcdoc contentWindow contentDocument location document defaultView parentNode host` | 同左 | 同左 |
+| `blockedAttributes` | `formaction` | 同左 | 同左 |
+| `gateMode` | `audit` | `audit` | `audit` |
+
+字段全集见 `jlc-vm.js` 的 `SECURITY_PROFILES`；`label` 是给管理台直接显示的中文名，
+`fingerprint` 覆盖除 `label` 外的全部字段（fnv1a 短哈希）（open 是 `0xdc8f9df4`，一眼就能认出来）。
+`allowEventAttributes` 三档全否是有意的：`on*` 字符串属性等价于 `new Function`，
+JLC 里事件的唯一入口是编译成函数的 `on:name = { … }` 块，`attr:onclick = "…"` 在编译期就失败。
+
+两个附加开关：`strictUrls: true` 把 `url:<scheme>` 类接口从「写入时中和」升级为
+「装载期拒绝」；`capabilityAllowlist: ["name", …]` 只放行列出的宿主 capability
+（`null` = 宿主注册了什么就能用什么）。解析结果被 `Object.freeze`，覆盖项只认这张表里的
+字段名——写错名字直接报错，不会静默失效。
+
+### 10.2 接口清单（manifest）
+
+编译器与 `auditModule()` 从**指令流**静态重算应用声明的接口，条目形如
+`{ kind, detail, key, sites }`，`kind` 只可能是：
+
+```text
+tag         创建的元素标签            frame        iframe / srcdoc
+url         常量属性里的 URL 协议      property       prop:name 写入
+attribute   on* 与 attr: 属性         host           http / navigate / timer / emit / title
+window      窗口事件委托              style          全局样式注入
+capability  调用的宿主函数
+```
+
+`sites` 是 `函数名@字节码偏移` 列表，用于把拒绝指回源码位置。`SYSCALLS` 表把每个
+`kind:detail` 映射到裁决它的策略字段（例如 `frame:iframe → allowSandboxedFrames`、
+`host:http → allowNetwork`、`window:event → allowWindowEvents`）。`.jbc` 的 MANIFEST 段
+只是这份清单的镜像：验证器重算后要求申报**不得少报**（`申报清单与指令流不一致，漏报接口：…`），
+伪造多报无效——权威版本永远来自指令流。
+
+### 10.3 硬限制与策略拒绝的分界
+
+有些接口任何档位、任何 fault 档都不放行，它们在编译期就报错：
+
+```text
+HARD_BLOCKED_TAGS        script style iframe（作为 attr: 名出现时）等 HTML 解析入口
+HARD_BLOCKED_PROPERTIES  innerHTML outerHTML srcdoc
+危险 URL                  javascript: vbscript: data:text/html
+BLOCKED_KEYS              原型链与宿主句柄字段（__proto__ constructor contentWindow …）
+```
+
+`isHardViolation(kind, detail)` 只对 `tag` / `property` / `url` 三类返回真。除此之外的一切
+拒绝都属于**策略**范畴，交由 fault 档处理。
+
+URL 分两条路径，这是 0.2 行为的延续：**HTML sink**（`src`、`href`、`xlink:href`、`formaction`…）
+走协议白名单 `urlSchemes`，不合规就换成 `about:blank` 并记 `neutralized` 计数 + 一条审计；
+**请求目标**（`http()` / resource）只受硬限制约束，`data:application/json` 之类的取数端点在
+`strict` 下照样能用。两条路径都不会让整页挂不掉——除非策略打开 `strictUrls: true`，
+此时静态可判定的 `url:<scheme>` 升级为装载期拒绝。
+
+### 10.4 fault 档
+
+`fault` 决定策略拒绝发生时的行为，可设在 kernel 或 mount 上：
+
+| fault | 装载期（静态清单被拒） | 运行期（写入时命中） |
+| --- | --- | --- |
+| `stop` | 渲染任何节点之前抛 `JLCPolicyError`，列出全部 `kind:detail（原因）` | 同上，异常解包后向上传播 |
+| `degrade` | 被拒接口替换成 `<jlc-denied role="note">接口 X 被策略 P 拒绝</jlc-denied>`；被拒的副作用（title / emit / http / timer / navigate / capability / srcdoc / 超配额写入）跳过并记账 | 副作用跳过 + `faults` 计数 |
+| `report` | 照常渲染，只通过 `onFault` 汇报 | 照常执行，只记录 |
+
+`onFault(info)` 收到 `{ action: "deny" | "skip" | "ignore" | "neutralize" | "quota", kind, detail, message }`。
+配额类失败（`maxDomNodes`、`maxStyleBytes`、`htmlMaxChars`、`maxTotalSteps`）抛
+`JLCQuotaError`：`degrade` 档下 `htmlMaxChars` 溢出降级为截断，其余仍向上抛。
+
+### 10.5 隔离域
+
+`isolation: "strict"` 时，实例只能操作自己的隔离域：`realmElement`（默认挂载点的父元素，
+可用 `realmRoot` 指定）之外的节点一律 `JLCIsolationError`。已经渲染出去的节点若被外部
+移出该域，实例自动 dispose（`setupAutoDispose`）。挂载点之外的一次 `appendChild`
+不能把 JLC 节点「偷」进宿主 DOM 再改。
+
+### 10.6 观测面
+
+`handle.inspect()` / `runtime.ledger()` 返回同一组计数：
+
+```text
+scopes effects listeners timers requests nodes styles      活动资源
+cycles faults denials neutralized                            累计与拒绝
+peakStack peakFrames                                         压力峰值
+```
+
+`unmount()` 后活动资源归零，`cycles` / `peak*` / `neutralized` 作为生命周期计数保留。
+管理台另有 `handle.permissions()`（逐条 `granted` / `reason`）、`handle.describe()`
+（策略 + 清单 + 用量）、`handle.policy()`，以及内核级 `kernel.list()` / `kernel.demountAll()` /
+`kernel.policy(name)`。
+
+Capability 仍是明确的信任边界：内核净化其输入输出、按 `capabilityAllowlist` 与
+`capability:<name>` 记账，但 capability 在宿主世界内部产生的全局副作用不受 JLC 生命周期控制。
 
 ## 11. 调度
 
@@ -282,7 +397,9 @@ flush 持续执行到队列为空；超过 1000 轮判定为响应循环。事�
 - **定时器捕获**：`after`/`every` 在执行到 `TIMER` 指令的瞬间对整条帧链做槽位
   快照；定时器体读取到的是创建时刻的局部变量值。全局 state 始终共享读写。
 - **步数预算**：除跳转、`NOP`/`POP`/`DUP`、`RETURN_NULL` 外每条指令计 1 步，
-  默认上限 100000（`maxSteps` 可调）；`for`/`each` 项目数仍受 `maxLoop` 约束。
+  单次执行默认上限 100000（`maxSteps` 可调）；实例生命周期内的累计上限是
+  `maxTotalSteps`（0 = 不限），越界抛 `JLCQuotaError` 并计入 `faults`；
+  `for`/`each` 项目数仍受 `maxLoop` 约束。
 - **action 调用**：`CALL` 对模块内 action 压入新帧（深度上限 100），对内建与
   capability 直接调用。参数默认值是独立表达式函数，可见此前参数与全局。
 - **视图结构 pass**：view 函数在 mount 时线性执行一次；响应式部分（text、

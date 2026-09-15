@@ -1,0 +1,148 @@
+<!doctype html>
+<!--
+  JLC 0.3 隔离游乐场 · 控制台
+  每个应用是一个独立页面（web/apps/<名>.html），被这里用 sandbox="allow-scripts" 的 iframe 嵌入：
+  浏览器给沙箱框架 opaque origin，内核再给每个实例一个策略 + 隔离域。控制台只有一条通道：postMessage。
+  产物由 scripts/build-web.mjs 生成；改 web/apps/*.jlc 后跑 npm run build:web。
+  Copyright (c) 2026 JLC contributors. MIT licensed.
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="no-referrer">
+<title>JLC 0.3 隔离游乐场</title>
+<link rel="stylesheet" href="./playground.css">
+</head>
+<body class="console">
+<header class="console-head">
+  <h1>JLC <span>隔离游乐场</span></h1>
+  <p class="console-lede">
+    每个演示应用都是<strong>一个真实页面</strong>：内联 <code>.jbc</code> 字节码 + 只含运行时的 <code>jlc-runtime.js</code>，
+    被本页用 <code>sandbox="allow-scripts"</code> 的 iframe 装进来。于是同一次「拒绝」可能来自三层：
+    <strong>浏览器沙箱</strong>（opaque origin，拿不到宿主 DOM / storage）、<strong>内核策略</strong>（profile + fault 档）、
+    <strong>编译期硬限制</strong>（<code>innerHTML</code>、<code>javascript:</code>、<code>&lt;script&gt;</code>，任何档都拒绝）。
+    开关改的是后两层，自检面板看的是第一层。
+  </p>
+  <div class="console-badges" id="badges"></div>
+</header>
+
+<div class="console-grid">
+  <aside class="console-left">
+    <section class="panel">
+      <h2>全局开关</h2>
+      <div class="panel-body">
+        <div class="field">
+          <label for="policy">策略档 profile</label>
+          <div class="segmented" id="policy" role="group">
+            <button type="button" data-policy="follow" data-active="1">跟随应用</button>
+            <button type="button" data-policy="strict">strict</button>
+            <button type="button" data-policy="open">open</button>
+            <button type="button" data-policy="trusted">trusted</button>
+          </div>
+          <p class="hint">strict = 0.2 的行为；open 打开 frame / data: / 窗口事件 / 富文本；trusted 只在受信构建里用。</p>
+        </div>
+        <div class="field">
+          <label for="fault">违反策略时 fault</label>
+          <div class="segmented" id="fault" role="group">
+            <button type="button" data-fault="stop" data-active="1">stop</button>
+            <button type="button" data-fault="degrade">degrade</button>
+            <button type="button" data-fault="report">report</button>
+          </div>
+          <p class="hint">stop：装载前整体抛错，一个节点都不渲染。degrade：被拒接口换成 <code>&lt;jlc-denied&gt;</code> 占位、副作用跳过并记账。report：照常渲染，只记录。</p>
+        </div>
+        <div class="field">
+          <label for="isolation">实例隔离域 isolation</label>
+          <div class="segmented" id="isolation" role="group">
+            <button type="button" data-iso="soft" data-active="1">soft</button>
+            <button type="button" data-iso="strict">strict</button>
+          </div>
+          <p class="hint">strict 时挂载点之外的 DOM 一律 <code>JLCIsolationError</code>，被移出隔离域的节点自动 dispose。</p>
+        </div>
+        <div class="field">
+          <label for="steps">maxTotalSteps（0 = 不限）</label>
+          <input id="steps" type="number" min="0" step="1000" value="0">
+          <p class="hint">实例累计指令数上限：给失控的 <code>every</code> / 递归 action 兜底。</p>
+        </div>
+        <div class="field">
+          <label for="override">策略覆盖（JSON，可留空）</label>
+          <textarea id="override" spellcheck="false" placeholder='{"allowNetwork": false, "maxDomNodes": 200, "allowDataUrls": false}'></textarea>
+          <p class="hint">覆盖优先于档位；解析失败就退回档位名。例：<code>{"allowDataUrls": false}</code>。</p>
+        </div>
+        <label class="switch" for="sso">
+          <input id="sso" type="checkbox">
+          <span>给 iframe 加上 <code>allow-same-origin</code>（<strong>别在生产这么干</strong>）</span>
+        </label>
+        <p class="hint">勾上后沙箱框架不再是 opaque origin：下面的自检会立刻出现「leaked」行——这正是要看的东西。</p>
+        <div class="segmented">
+          <button type="button" id="apply">应用到全部</button>
+          <button type="button" id="reload">重建全部 iframe</button>
+          <button type="button" id="probe">跑一遍隔离自检</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>事件日志</h2>
+      <div class="panel-body">
+        <div class="segmented" id="log-filters">
+          <button type="button" data-filter="all" data-active="1">全部</button>
+          <button type="button" data-filter="jlc:fault">策略</button>
+          <button type="button" data-filter="jlc:denied">拒绝</button>
+          <button type="button" data-filter="jlc:isolation">隔离</button>
+          <button type="button" data-filter="jlc:error">错误</button>
+          <button type="button" id="clear-log">清空</button>
+        </div>
+        <div class="log" id="log"></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>这页怎么来的</h2>
+      <div class="panel-body">
+        <p class="hint">
+          <code>web/apps/*.jlc</code> 是源；<code>npm run build:web</code> 用仓库里的真编译器生成
+          <code>web/apps/*.html</code>（内联 base64 <code>.jbc</code>）、<code>web/jlc-runtime.js</code>（仅 VM）、
+          <code>web/jlc-full.js</code>（编译器 + VM）与 <code>web/registry.js</code>。<code>npm run check</code> 会跑 <code>--check</code> 防漂移。
+          产物零网络请求，所以 <code>file://</code> 直开也能玩；起本地静态服务器则会带上 COOP/COEP，右上角的 <code>crossOriginIsolated</code> 变绿。
+        </p>
+      </div>
+    </section>
+  </aside>
+
+  <section class="console-right">
+    <div class="apps" id="apps"></div>
+
+    <section class="panel" id="compiler-panel">
+      <h2>编译台 · 宿主有编译器，沙箱页没有</h2>
+      <div class="panel-body">
+        <div class="segmented" id="presets">
+          <button type="button" data-preset="safe" data-active="1">① 只用内核能力</button>
+          <button type="button" data-preset="open">② 需要 open 档</button>
+          <button type="button" data-preset="hard">③ 撞硬限制</button>
+          <button type="button" data-preset="quota">④ 超配额</button>
+        </div>
+        <div class="field">
+          <label for="source">JLC 源码</label>
+          <textarea id="source" spellcheck="false" rows="16"></textarea>
+        </div>
+        <div class="inject-row">
+          <button type="button" id="compile">编译 + 预检</button>
+          <label class="field-inline" for="inject-target">注入到
+            <select id="inject-target"></select>
+          </label>
+          <button type="button" id="inject" disabled>装入沙箱页</button>
+        </div>
+        <p class="hint" id="compile-note">编译发生在控制台（同源、有编译器），产物 <code>.jbc</code> 通过 <code>postMessage</code> 注入沙箱页；沙箱页只带运行时，无法自行编译——这正是部署形态。</p>
+        <pre class="dump" id="compile-out">尚未编译。</pre>
+      </div>
+    </section>
+  </section>
+</div>
+
+<script src="./registry.js"></script>
+<script src="./jlc-full.js"></script>
+<script src="./console.js"></script>
+</body>
+</html>
