@@ -46,7 +46,7 @@ test("web/index.html 是极简纯内核 Bootloader：无业务标签，哈希路
   assert.match(html, /import\s*\{\s*JLC\s*\}\s*from\s*"\.\.\/jlc\.js"/u, "内核从仓库根的 ES Module 引入");
   assert.match(html, /location\.hash\.replace\(\/\^#\\\/\?\/,\s*""\)/u, "通过 URL Hash 选择 .jlc 应用");
   assert.match(html, /\.\/apps\/todo\.jlc/u, "默认加载 todo.jlc");
-  assert.match(html, /fetch\(jlcFile\)/u, ".jlc 以纯文本方式拉取");
+  assert.match(html, /fetch\(jlcFile/u, ".jlc 以纯文本方式拉取");
   assert.match(html, /policy:\s*"open"/u);
   assert.match(html, /isolation:\s*"strict"/u);
   assert.match(html, /autoDispose:\s*true/u);

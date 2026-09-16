@@ -39,6 +39,7 @@ export const BUILTIN_NAMES = [
   "get", "has", "keys", "values", "entries", "range", "append", "prepend", "removeAt",
   "replaceAt", "merge", "json", "parseJson", "min", "max", "round", "floor", "ceil",
   "abs", "clamp", "now", "http", "reload", "navigate", "replace", "emit", "title", "favicon",
+  "indexOf", "copy", "scrollTo", "storage",
 ];
 export const NO_FUNC = 0xffff;
 
@@ -2306,31 +2307,25 @@ class Machine {
       notePolicy(runtime, { action: "clamp", kind: "host", detail: "every", message: `every 周期被抬到策略下限 ${minimum}ms` });
     }
     runtime.metrics.timers += 1;
-    let active = true;
-    let timer;
+    const chain = this.snapshotChain();
+    const task = {
+      mode,
+      delay,
+      nextRun: Date.now() + delay,
+      funcIndex,
+      chain,
+      scope,
+      active: true,
+      release: null,
+    };
     const cleanup = () => {
-      if (!active) return;
-      active = false;
-      if (mode === 0) {
-        if (runtime.window?.clearTimeout) runtime.window.clearTimeout(timer);
-        else clearTimeout(timer);
-      } else if (runtime.window?.clearInterval) runtime.window.clearInterval(timer);
-      else clearInterval(timer);
+      if (!task.active) return;
+      task.active = false;
+      runtime.removeTimer(task);
       runtime.metrics.timers -= 1;
     };
-    const release = scope.own(cleanup);
-    const chain = this.snapshotChain();
-    const run = () => {
-      if (!active || runtime.destroyed) return;
-      if (mode === 0) release();
-      try {
-        runtime.batch(() => this.runFunction(funcIndex, chain, scope));
-      } catch (error) {
-        runtime.reportError(error);
-      }
-    };
-    if (mode === 0) timer = runtime.window?.setTimeout?.(run, delay) ?? setTimeout(run, delay);
-    else timer = runtime.window?.setInterval?.(run, delay) ?? setInterval(run, delay);
+    task.release = scope.own(cleanup);
+    runtime.scheduleTimer(task);
   }
 
   dispatch(entryFrame) {
@@ -3119,6 +3114,58 @@ function createBuiltins(runtime) {
     return null;
   });
 
+  // 1. 字符串/数组索引查找：indexOf(haystack, needle)
+  add("indexOf", ([haystack, needle]) => {
+    if (typeof haystack === "string" || Array.isArray(haystack)) {
+      return haystack.indexOf(needle);
+    }
+    return -1;
+  });
+
+  // 2. 原生剪贴板接管：copy(text)
+  add("copy", ([value]) => {
+    const text = String(value ?? "");
+    try {
+      if (runtime.window?.navigator?.clipboard) {
+        runtime.window.navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {}
+    return false;
+  });
+
+  // 3. 页面视口平滑滚动：scrollTo(x, y)
+  add("scrollTo", ([x, y]) => {
+    try {
+      runtime.window?.scrollTo?.({
+        left: Number(x ?? 0),
+        top: Number(y ?? 0),
+        behavior: "smooth"
+      });
+    } catch {
+      if (runtime.window) runtime.window.scrollX = Number(x ?? 0);
+    }
+    return null;
+  });
+
+  // 4. 虚拟持久化存储：storage(key, value?) —— 单参数读，双参数写
+  add("storage", ([key, val]) => {
+    const k = "jlc_store_" + String(key ?? "");
+    try {
+      const ls = runtime.window?.localStorage ?? globalThis.localStorage;
+      if (!ls) return null;
+      if (val === undefined) {
+        const data = ls.getItem(k);
+        return data ? JSON.parse(data) : null;
+      } else {
+        ls.setItem(k, JSON.stringify(sanitizeValue(val)));
+        return val;
+      }
+    } catch {
+      return null;
+    }
+  });
+
   return builtins;
 }
 
@@ -3161,6 +3208,10 @@ class Runtime {
     this.destroyed = false;
     this.initializing = true;
     this.scheduler = new Scheduler(this);
+    // 【0.4.1 统一 Tick Wheel 调度】收归 every / after 独立闭包，合并微任务派发，杜绝高频掉帧
+    this.timerTasks = new Set();
+    this.activeTickHandle = null;
+    this.scheduledTickTime = 0;
     this.globals = new GlobalTable();
     this.module = null;
     this.machine = null;
@@ -3333,9 +3384,92 @@ class Runtime {
     }
   }
 
+  scheduleTimer(task) {
+    if (this.destroyed) return;
+    this.timerTasks.add(task);
+    if (this.activeTickHandle == null) {
+      this.planNextTick();
+    } else if (task.nextRun < this.scheduledTickTime) {
+      if (this.window?.clearTimeout) this.window.clearTimeout(this.activeTickHandle);
+      else clearTimeout(this.activeTickHandle);
+      this.activeTickHandle = null;
+      this.planNextTick();
+    }
+  }
+
+  removeTimer(task) {
+    if (!this.timerTasks) return;
+    this.timerTasks.delete(task);
+    if (this.timerTasks.size === 0 && this.activeTickHandle != null) {
+      if (this.window?.clearTimeout) this.window.clearTimeout(this.activeTickHandle);
+      else clearTimeout(this.activeTickHandle);
+      this.activeTickHandle = null;
+      this.scheduledTickTime = 0;
+    }
+  }
+
+  planNextTick() {
+    if (this.destroyed || !this.timerTasks || this.timerTasks.size === 0) return;
+    if (this.activeTickHandle != null) return;
+    const now = Date.now();
+    let earliest = Infinity;
+    for (const task of this.timerTasks) {
+      if (task.nextRun < earliest) earliest = task.nextRun;
+    }
+    if (earliest === Infinity) return;
+    const delay = Math.max(0, earliest - now);
+    this.scheduledTickTime = earliest;
+    const tick = () => {
+      this.activeTickHandle = null;
+      this.scheduledTickTime = 0;
+      this.onTimerTick();
+    };
+    this.activeTickHandle = this.window?.setTimeout?.(tick, delay) ?? setTimeout(tick, delay);
+  }
+
+  onTimerTick() {
+    if (this.destroyed || !this.timerTasks || this.timerTasks.size === 0) return;
+    const now = Date.now();
+    const ready = [];
+    for (const task of this.timerTasks) {
+      if (task.active && task.nextRun <= now + 2) {
+        ready.push(task);
+      }
+    }
+    for (const task of ready) {
+      if (task.mode === 0) {
+        task.release?.();
+      } else {
+        task.nextRun = now + task.delay;
+      }
+    }
+    if (ready.length > 0) {
+      this.batch(() => {
+        for (const task of ready) {
+          if (this.destroyed) break;
+          if (task.scope && !task.scope.disposed && this.machine) {
+            try {
+              this.machine.runFunction(task.funcIndex, task.chain, task.scope);
+            } catch (error) {
+              this.reportError(error);
+            }
+          }
+        }
+      });
+    }
+    this.planNextTick();
+  }
+
   destroy() {
     if (this.destroyed) return;
     this.destroyed = true;
+    if (this.activeTickHandle != null) {
+      if (this.window?.clearTimeout) this.window.clearTimeout(this.activeTickHandle);
+      else clearTimeout(this.activeTickHandle);
+      this.activeTickHandle = null;
+    }
+    this.timerTasks?.clear();
+    this.timerTasks = null;
     this.rootScope?.dispose();
     this.scheduler?.clear();
     for (const binding of this.globals?.bindings ?? []) {

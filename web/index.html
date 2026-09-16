@@ -21,7 +21,9 @@
         const hash = location.hash.replace(/^#\/?/, "");
         const jlcFile = hash ? `./apps/${hash}` : "./apps/todo.jlc";
         
-        const res = await fetch(jlcFile);
+        const res = await fetch(jlcFile, {
+          headers: { Accept: "text/plain, */*" }
+        });
         if (!res.ok) {
           viewport.innerHTML = `<div class="fatal-box">无法拉取应用文件: ${jlcFile} (HTTP ${res.status})</div>`;
           return;
@@ -43,7 +45,11 @@
       }
     }
 
-    window.addEventListener("hashchange", () => location.reload());
+    let hashDebounceTimer;
+    window.addEventListener("hashchange", () => {
+      clearTimeout(hashDebounceTimer);
+      hashDebounceTimer = setTimeout(() => location.reload(), 50);
+    });
     bootJLC();
   </script>
 </body>
