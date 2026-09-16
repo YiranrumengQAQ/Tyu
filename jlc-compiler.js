@@ -443,8 +443,19 @@ export class Parser {
       this.expect(")");
     }
     let children = [];
-    if (this.is("{")) children = this.parseViewBlock();
-    else this.terminator();
+    if (this.is("{")) {
+      children = this.parseViewBlock();
+    } else if (this.match(";")) {
+      // 显式分号结束
+    } else {
+      // 【0.4.1 宽容闭合】：如果紧接着是 '}'、'when'、'each'、'text' 或下一个标签，自动视为空元素闭合
+      const next = this.current();
+      if (this.is("}") || next.type === "eof" || (next.type === "identifier")) {
+        // 自动视为无子节点标签闭合，不抛语法异常
+      } else {
+        this.terminator();
+      }
+    }
     return { type: "ElementNode", tag, attributes, children, loc: tagToken };
   }
 

@@ -361,3 +361,126 @@ test("JLCVM.disassemble and opcode-keyed OP_SPEC (inspector panel APIs)", async 
   assert.equal(OP_SPEC[facade.OP.CONST_INT].name, "CONST_INT");
   assert.ok((histogram.get("CONST_INT") ?? 0) >= 1);
 });
+
+test("parser: 视图中空标签漏写分号或大括号自动闭合，无需抛出异常", () => {
+  const source = `
+    app SelfClose {
+      state visible = true;
+      view {
+        div {
+          span(class = "caret")
+          when (visible) {
+            span(class = "inner-caret")
+          }
+          hr
+          button(class = "btn") { text "click"; }
+        }
+      }
+    }
+  `;
+  const program = JLC.compile(source);
+  const { document, target } = createDOM();
+  const handle = program.mount(target, { document });
+  assert.ok(target.querySelector(".caret"));
+  assert.ok(target.querySelector(".inner-caret"));
+  assert.ok(target.querySelector("hr"));
+  assert.ok(target.querySelector(".btn"));
+  handle.unmount();
+});
+
+test("builtins: indexOf, copy, scrollTo, storage 均开箱即用且无需外部注入", async () => {
+  const { document, target, window } = createDOM();
+  let clipboardText = "";
+  window.navigator = {
+    clipboard: {
+      writeText: (t) => { clipboardText = t; return Promise.resolve(); }
+    }
+  };
+  let scrolled = null;
+  window.scrollTo = (opts) => { scrolled = opts; };
+  const storageMap = new Map();
+  window.localStorage = {
+    getItem: (k) => storageMap.get(k) ?? null,
+    setItem: (k, v) => storageMap.set(k, v),
+  };
+
+  const source = `
+    app BuiltinsTest {
+      state textIdx = indexOf("hello world", "world");
+      state arrIdx = indexOf(["apple", "banana", "cherry"], "banana");
+      state missingIdx = indexOf("abc", "z");
+      state storedVal = null;
+      state copied = false;
+
+      action testOps() {
+        copied = copy("copied message");
+        scrollTo(0, 500);
+        storage("user_theme", { mode: "dark", size: 14 });
+        storedVal = storage("user_theme");
+      }
+
+      view {
+        div {
+          span(class = "t-idx") { text textIdx; }
+          span(class = "a-idx") { text arrIdx; }
+          span(class = "m-idx") { text missingIdx; }
+          span(class = "stored") { text json(storedVal); }
+        }
+      }
+    }
+  `;
+
+  const handle = JLC.mount(source, target, { document });
+  assert.equal(target.querySelector(".t-idx").textContent, "6");
+  assert.equal(target.querySelector(".a-idx").textContent, "1");
+  assert.equal(target.querySelector(".m-idx").textContent, "-1");
+
+  handle.call("testOps");
+  handle.flush();
+
+  assert.equal(clipboardText, "copied message");
+  assert.deepEqual(scrolled, { left: 0, top: 500, behavior: "smooth" });
+  assert.equal(handle.get("storedVal").mode, "dark");
+  assert.equal(handle.get("storedVal").size, 14);
+  assert.equal(target.querySelector(".stored").textContent, '{"mode":"dark","size":14}');
+  handle.unmount();
+});
+
+test("timer tick wheel: 多个高频 every / after 统一批处理且无独立闭包泄漏", async () => {
+  const { document, target } = createDOM();
+  const source = `
+    app TickWheelTest {
+      state tickCount = 0;
+      state timer1Done = false;
+      state timer2Done = false;
+
+      action start() {
+        after (10) { timer1Done = true; }
+        after (10) { timer2Done = true; }
+        every (20) { tickCount = tickCount + 1; }
+      }
+
+      view {
+        div {
+          span(class = "count") { text tickCount; }
+          span(class = "t1") { text bool(timer1Done); }
+          span(class = "t2") { text bool(timer2Done); }
+        }
+      }
+    }
+  `;
+  const handle = JLC.mount(source, target, { document });
+  handle.call("start");
+  assert.equal(handle.inspect().timers, 3);
+
+  await new Promise((r) => setTimeout(r, 60));
+  handle.flush();
+
+  assert.equal(handle.get("timer1Done"), true);
+  assert.equal(handle.get("timer2Done"), true);
+  assert.ok(handle.get("tickCount") >= 1);
+  assert.equal(handle.inspect().timers, 1); // 两个 after 已完成，仅剩 every
+
+  handle.unmount();
+  assert.equal(handle.inspect().timers, 0);
+});
