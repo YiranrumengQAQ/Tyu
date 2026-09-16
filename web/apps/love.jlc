@@ -8,9 +8,6 @@
 
 app RomanceStudio {
 
-  // ============================================================
-  // 状态
-  // ============================================================
   state booting = true;
   state themeName = "晨光";
   state fontSize = 1;
@@ -57,12 +54,8 @@ app RomanceStudio {
   state typingToken = 0;
   state toast = "";
   state toastKind = "info";
-  state clock = "";
   state visited = 1;
 
-  // ============================================================
-  // 派生
-  // ============================================================
   derive categories = ["全部", "心动", "相遇", "陪伴", "思念"];
   derive currentTheme = getTheme(themes, themeName);
   derive accent = get(currentTheme, "accent", "#ff8fab");
@@ -85,9 +78,6 @@ app RomanceStudio {
   derive scaledSize = fontSize == 1 ? "1.8rem" : (fontSize == 2 ? "2.2rem" : "2.6rem");
   derive scrollProgress = clamp(round($scroll.y / 5), 0, 100);
 
-  // ============================================================
-  // 样式
-  // ============================================================
   style `
     *, *::before, *::after { box-sizing: border-box; }
     html, body { margin: 0; padding: 0; min-height: 100dvh; }
@@ -237,9 +227,6 @@ app RomanceStudio {
     "--muted:" + get(currentTheme, "muted", "#8d80a3") + ";" +
     "}";
 
-  // ============================================================
-  // 动作（纯内建，无任何外部宿主调用）
-  // ============================================================
   action getTheme(list, name) {
     for (t in list) {
       if (t.id == name) {
@@ -373,13 +360,9 @@ app RomanceStudio {
     }
   }
 
-  // ============================================================
-  // 视图
-  // ============================================================
   view {
     div(class = "page") {
 
-      // 顶栏
       header(class = "topbar") {
         div(class = "topbar-progress", style:width = scrollProgress + "%");
         div {
@@ -398,7 +381,6 @@ app RomanceStudio {
         }
       }
 
-      // 主语录卡片
       section(class = "stage") {
         div {
           p(
@@ -420,7 +402,6 @@ app RomanceStudio {
         }
       }
 
-      // 操作按钮
       section(class = "actions") {
         button(class = "btn", on:click = { step(-1); }) { text "上一句"; }
         button(class = "btn btn--accent", on:click = { shuffle(); }) { text "换一句"; }
@@ -434,7 +415,6 @@ app RomanceStudio {
         button(class = "btn", on:click = { step(1); }) { text "下一句"; }
       }
 
-      // 分类筛选
       nav(class = "filters") {
         each (cat in categories key cat) {
           button(
@@ -446,7 +426,6 @@ app RomanceStudio {
         }
       }
 
-      // 收藏列表
       when (favCount > 0) {
         section {
           h3 { text "心选收藏 (" + string(favCount) + ")"; }
@@ -461,7 +440,6 @@ app RomanceStudio {
         }
       }
 
-      // 提示
       when (toast != "") {
         div(class = "toast") { text toast; }
       }
