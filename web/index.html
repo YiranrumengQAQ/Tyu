@@ -4,24 +4,43 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>JLC OS</title>
-  <style>html, body { margin: 0; padding: 0; min-height: 100dvh; } #kernel-viewport { width: 100%; min-height: 100dvh; }</style>
+  <style>
+    html, body { margin: 0; padding: 0; min-height: 100dvh; background: #fff; }
+    #kernel-viewport { width: 100%; min-height: 100dvh; }
+    .fatal-box { padding: 20px; color: #d32f2f; font-family: monospace; font-size: 14px; white-space: pre-wrap; line-height: 1.6; }
+  </style>
 </head>
 <body>
-  <!-- 整个视口作为唯一的物理挂载点 -->
   <div id="kernel-viewport"></div>
   <script type="module">
     import { JLC } from "../jlc.js";
 
     async function bootJLC() {
-      // 1. 读取当前哈希指向的 .jlc 文件，默认加载 todo.jlc
-      const hash = location.hash.replace(/^#\/?/, "");
-      const jlcFile = hash ? `./apps/${hash}` : "./apps/todo.jlc";
-      // 2. 原生浏览器只当文本拉取，无任何执行风险
-      const res = await fetch(jlcFile);
-      if (!res.ok) { document.getElementById("kernel-viewport").textContent = "无法加载 .jlc 应用: " + jlcFile; return; }
-      const source = await res.text();
-      // 3. 全权交由内核进行语法自愈、字节码编译并接管挂载
-      JLC.mount(source, "#kernel-viewport", { policy: "open", isolation: "strict", autoDispose: true });
+      const viewport = document.getElementById("kernel-viewport");
+      try {
+        const hash = location.hash.replace(/^#\/?/, "");
+        const jlcFile = hash ? `./apps/${hash}` : "./apps/todo.jlc";
+        
+        const res = await fetch(jlcFile);
+        if (!res.ok) {
+          viewport.innerHTML = `<div class="fatal-box">无法拉取应用文件: ${jlcFile} (HTTP ${res.status})</div>`;
+          return;
+        }
+        const source = await res.text();
+
+        JLC.mount(source, "#kernel-viewport", {
+          policy: "open",
+          isolation: "strict",
+          autoDispose: true,
+          onError: (err) => {
+            console.error(err);
+            viewport.innerHTML = `<div class="fatal-box">运行时异常:\n${err.stack || err.message || err}</div>`;
+          }
+        });
+      } catch (err) {
+        console.error(err);
+        viewport.innerHTML = `<div class="fatal-box">内核装载失败:\n${err.stack || err.message || err}</div>`;
+      }
     }
 
     window.addEventListener("hashchange", () => location.reload());
