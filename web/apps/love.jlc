@@ -38,14 +38,6 @@ app RomanceStudio {
     { id: "星河", accent: "#7aa7f0", bg: "#eaf0fd", light: "#ffffff", dark: "#d8e2f8", inset: "#f2f6fd", ink: "#1e2a4a", ink2: "#3a4a6b", muted: "#7183a8", darkMode: false }
   ];
 
-  state petals = [
-    { id: 1, left: 6,  size: 16, duration: 22, delay: -2 },
-    { id: 2, left: 24, size: 20, duration: 27, delay: -9 },
-    { id: 3, left: 45, size: 14, duration: 19, delay: -14 },
-    { id: 4, left: 68, size: 22, duration: 29, delay: -5 },
-    { id: 5, left: 88, size: 15, duration: 24, delay: -18 }
-  ];
-
   state currentIndex = 0;
   state activeCategory = "全部";
   state favorites = [];
@@ -53,13 +45,11 @@ app RomanceStudio {
   state typing = false;
   state typingToken = 0;
   state toast = "";
-  state toastKind = "info";
   state visited = 1;
 
   derive categories = ["全部", "心动", "相遇", "陪伴", "思念"];
   derive currentTheme = getTheme(themes, themeName);
   derive accent = get(currentTheme, "accent", "#ff8fab");
-  derive isDark = get(currentTheme, "darkMode", false);
 
   derive currentQuote = get(quotes, currentIndex, {
     id: 0,
@@ -70,7 +60,6 @@ app RomanceStudio {
 
   derive total = max(1, len(currentQuote.text));
   derive displayText = slice(currentQuote.text, 0, typedChars);
-  derive progress = clamp(round(typedChars * 100 / total), 0, 100);
   derive isFav = checkFav(favorites, currentQuote.id);
   derive favCount = len(favorites);
   derive quoteNumber = currentIndex + 1;
@@ -364,7 +353,7 @@ app RomanceStudio {
     div(class = "page") {
 
       header(class = "topbar") {
-        div(class = "topbar-progress", style:width = scrollProgress + "%");
+        div(class = "topbar-progress", style:width = scrollProgress + "%") {}
         div {
           h1(class = "brand-title") { text "心语笺"; }
           p(class = "brand-sub") { text "纸短情长 · 一字一句"; }
@@ -391,7 +380,7 @@ app RomanceStudio {
           ) {
             text displayText;
             when (typing) {
-              span(class = "caret");
+              span(class = "caret") {}
             }
           }
           div(class = "quote-meta") {
@@ -443,6 +432,7 @@ app RomanceStudio {
       when (toast != "") {
         div(class = "toast") { text toast; }
       }
+
     }
   }
 }
