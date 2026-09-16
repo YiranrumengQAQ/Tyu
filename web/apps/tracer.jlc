@@ -1,10 +1,10 @@
 /** @jlc-page
  * title: 响应式追踪器
- * summary: 定时器 / emit / 窗口事件委托 / capability 计数——把 runtime.ledger() 的数字变成会动的东西
+ * summary: 定时器 / emit / 窗口事件委托 / 纯内核计数——把 runtime.ledger() 的数字变成会动的东西
  * policy: open
  * isolation: strict
- * capabilities: storage
- * demo: 起停定时器看 cycles/effects 变化；「广播」用 emit 在根元素上自顶向下捕获；把 fault 切到 report 再看窗口事件被拒时的行为差异
+ * capabilities:
+ * demo: 起停定时器看 cycles/effects 变化；「广播」用 emit 在根元素上自顶向下捕获；0.4 起不再依赖任何宿主 capability，计数全在内核状态里
  */
 app SignalTracer {
   state ticks = 0;
@@ -42,7 +42,8 @@ app SignalTracer {
   }
 
   action persist() {
-    saved = storage("increment", "jlc-tracer", 1);
+    // 0.4 纯内核形态：不落宿主存储，计数是内核状态，随实例生命周期走
+    saved += 1;
     return null;
   }
 
@@ -72,12 +73,12 @@ app SignalTracer {
         button(on:click = { start(); }) { text "启动"; }
         button(on:click = { stop(); }) { text "暂停"; }
         button(on:click = { broadcast("emit"); }) { text "广播一次"; }
-        button(on:click = { persist(); }) { text "写一次 storage"; }
+        button(on:click = { persist(); }) { text "记一次计数"; }
       }
       div(class = "tracer-grid") {
         div(class = "tracer-metric") { strong { text ticks; } span { text "ticks"; } }
         div(class = "tracer-metric") { strong { text rate; } span { text "ticks × 3（derive）"; } }
-        div(class = "tracer-metric") { strong { text saved; } span { text "storage 计数"; } }
+        div(class = "tracer-metric") { strong { text saved; } span { text "内核计数"; } }
         div(class = "tracer-metric") { strong { text resizes; } span { text "窗口 resize"; } }
       }
       div(class = "tracer-trace") {

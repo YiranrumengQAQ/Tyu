@@ -3,14 +3,14 @@
  * summary: 不可信 HTML 的官方去处：srcdoc + 内核托管 sandbox；strict 下 frame 被整体收回
  * policy: open
  * isolation: strict
- * capabilities: clipboard
- * demo: 左边输入 HTML，右边在 frame 里渲染（150ms 防抖）。把 fault 切到 stop 看预检失败清单；切到 strict 看 frame 被收回后应用如何降级
+ * capabilities:
+ * demo: 左边输入 HTML，右边在 frame 里渲染（150ms 防抖）。0.4 起复制改为纯内核展开完整文档（不再摸宿主剪贴板）
  */
 app HtmlPreview {
   state source = "<h1>你好，沙箱</h1>\n<style>body{font:16px/1.6 system-ui;margin:14px;color:#0b0d12}h1{font-size:20px}</style>\n<p>这里的 <code>&lt;script&gt;</code> 会执行，但它是 opaque origin：读不到宿主 DOM，也拿不到宿主的 localStorage。</p>\n<button onclick=\"document.getElementById('n').textContent = String(Number(document.getElementById('n').textContent) + 1)\">iframe 里的按钮：点我计数</button>\n<p>计数 <span id='n'>0</span></p>";
   state staged = "";
   state pending = 0;
-  state copied = "";
+  state revealed = false;
 
   derive html = "<!doctype html><html><head><meta charset=\"utf-8\"></head><body>" + source + "</body></html>";
   derive bytes = len(source);
@@ -30,8 +30,8 @@ app HtmlPreview {
   }
 
   action copySource() {
-    clipboard("copy", html);
-    copied = "已复制 " + bytes + " 字节";
+    // 0.4 纯内核形态：不触碰宿主剪贴板，把完整文档就地展开供手动选取
+    revealed = revealed == false;
     return null;
   }
 
@@ -45,6 +45,11 @@ app HtmlPreview {
     .html-preview iframe { width: 100%; min-height: 320px; border: 2px solid var(--ink); background: white; box-shadow: 5px 5px 0 var(--acc-2); }
     .html-side { display: grid; gap: 10px; align-content: start; }
     .html-bar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .html-doc {
+      margin: 0; padding: 12px; max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-all;
+      border: 2px solid var(--border); background: var(--code-bg); color: var(--code-ink);
+      font: 500 12px / 1.65 ui-monospace, monospace;
+    }
   `;
 
   view {
@@ -58,8 +63,11 @@ app HtmlPreview {
         textarea(bind:value = staged, on:input = { stage($event.target.value); }, spellcheck = false, aria:label = "HTML 源码", rows = 14);
         div(class = "html-bar") {
           button(on:click = { stage(source); }) { text "重新渲染"; }
-          button(on:click = { copySource(); }) { text "复制完整文档"; }
-          when (copied != "") { span(class = "badge") { text copied; } }
+          button(on:click = { copySource(); }) { text revealed ? "收起完整文档" : "展开完整文档"; }
+          when (revealed) { span(class = "badge") { text bytes + " 字节"; } }
+        }
+        when (revealed) {
+          pre(class = "html-doc") { text html; }
         }
         p(class = "muted") { text "sandbox 由内核托管：iframe 只拿到策略里的 allow-scripts allow-forms allow-popups，页面上写 sandbox 也不会被采纳。"; }
       }

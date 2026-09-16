@@ -10,7 +10,7 @@
  * into bytecode is the job of jlc-compiler.js.
  */
 
-export const VERSION = "0.3.0";
+export const VERSION = "0.4.0";
 export const BYTECODE_VERSION = 2;
 export const ACCEPTED_BYTECODE_VERSIONS = [1, 2]; // 1 = 无需求清单的旧模块，运行期仍逐条把关
 export const ABI_VERSION = "jlc-abi/2";
@@ -38,7 +38,7 @@ export const BUILTIN_NAMES = [
   "len", "string", "number", "bool", "upper", "lower", "trim", "join", "slice", "at",
   "get", "has", "keys", "values", "entries", "range", "append", "prepend", "removeAt",
   "replaceAt", "merge", "json", "parseJson", "min", "max", "round", "floor", "ceil",
-  "abs", "clamp", "now", "http", "reload", "navigate", "replace", "emit", "title",
+  "abs", "clamp", "now", "http", "reload", "navigate", "replace", "emit", "title", "favicon",
 ];
 export const NO_FUNC = 0xffff;
 
@@ -211,6 +211,7 @@ export const SYSCALLS = Object.freeze([
   { permission: "host:timer", field: "allowTimer", note: "after / every；every 周期可被 frameMinIntervalMs 抬升" },
   { permission: "host:event", field: "allowCustomEvents", note: "emit() 派发 CustomEvent" },
   { permission: "host:title", field: "allowDocumentTitle", note: "title() 写 document.title" },
+  { permission: "host:favicon", field: "allowDocumentTitle", note: "favicon() 写 link[rel=icon]（SVG 源码自动转 data: URL，其余走 URL 净化）" },
   { permission: "window:event", field: "allowWindowEvents", note: "app 级 onWindow 监听（宿主代持，随实例卸载而解绑）" },
   { permission: "style:url", field: "allowDataUrls", note: "CSS url() 中的 data: 资源" },
   { permission: "style:global", field: "styleScoping", note: "style 声明是否被重写为只作用于本实例子树（prefix = 隔离，off = 全局）" },
@@ -369,6 +370,7 @@ export function policyViolation(policy, kind, detail) {
     if (value === "timer") return policy.allowTimer ? null : "allowTimer = false";
     if (value === "emit") return policy.allowCustomEvents ? null : "allowCustomEvents = false";
     if (value === "title") return policy.allowDocumentTitle ? null : "allowDocumentTitle = false";
+    if (value === "favicon") return policy.allowDocumentTitle ? null : "allowDocumentTitle = false";
     return null;
   }
   if (kind === "window") return policy.allowWindowEvents ? null : "allowWindowEvents = false";
@@ -526,6 +528,7 @@ export function auditModule(module) {
           else if (name === "navigate" || name === "replace") add("host", "navigate", `${func.name}@${at}`);
           else if (name === "emit") add("host", "emit", `${func.name}@${at}`);
           else if (name === "title") add("host", "title", `${func.name}@${at}`);
+          else if (name === "favicon") add("host", "favicon", `${func.name}@${at}`);
           break;
         }
         case OP.TIMER:
@@ -1999,10 +2002,19 @@ function withinRealm(runtime, node) {
 }
 
 function insertInto(runtime, parent, node, before) {
-  // 只裁决“已经挂在文档上的父节点”：构建中的游标父节点本来还没接入文档，
-  // 由 ELEM_END 插入目标那一次统一把关，避免把正常建树误判成越权。
-  if (runtime?.isolation === "strict" && parent?.isConnected && !withinRealm(runtime, parent)) {
-    throw new JLCIsolationError(`isolation: "strict" 拒绝把节点插入应用子树之外（目标 <${String(parent.nodeName ?? "?").toLowerCase()}>）`);
+  if (runtime?.isolation === "strict") {
+    // 强制断言：父节点必须位于当前实例的隔离域内。
+    // 唯一豁免：尚未接入文档、且由本运行时自建的构建中游标父节点——
+    // 它接入文档的那一刻仍会经过本函数统一把关，逃不出隔离域。
+    // 由此杜绝任何对宿主根容器外部的节点插入（包括外部传入的游离节点）。
+    if (parent && !withinRealm(runtime, parent)) {
+      const ownBuild = !parent.isConnected && runtime.ownedNodes?.has(parent);
+      if (!ownBuild) {
+        throw new JLCIsolationError(
+          `[沙箱违规] isolation: "strict" 禁止将 <${String(node?.nodeName ?? "?").toLowerCase()}> 插入到应用子树之外（目标容器 <${String(parent.nodeName ?? "?").toLowerCase()}>）`,
+        );
+      }
+    }
   }
   parent.insertBefore(node, before ?? null);
 }
@@ -3076,7 +3088,34 @@ function createBuiltins(runtime) {
   });
   add("title", ([value]) => {
     if (guardSurface(runtime, "host", "title", `策略 ${runtime.policy.profile} 未授予改标题（host:title）`) === "skip") return null;
-    if (runtime.document) runtime.document.title = String(value ?? "");
+    const titleText = String(value ?? "");
+    if (runtime.document) runtime.document.title = titleText;
+    return null;
+  });
+  // 【0.4 全权接管】动态设置 Favicon：SVG 源码转 data: URL，其余走策略 URL 净化。
+  add("favicon", ([svgOrUrl]) => {
+    if (guardSurface(runtime, "host", "favicon", `策略 ${runtime.policy.profile} 未授予改图标（host:favicon）`) === "skip") return null;
+    if (!runtime.document) return null;
+    let link = runtime.document.querySelector?.("link[rel~='icon']") ?? null;
+    if (!link) {
+      // 兜底：宿主 querySelector 不支持 ~= 属性选择器时，逐个比对 rel 词表
+      for (const candidate of runtime.document.querySelectorAll?.("link") ?? []) {
+        if (String(candidate.getAttribute?.("rel") ?? "").split(/\s+/u).includes("icon")) {
+          link = candidate;
+          break;
+        }
+      }
+    }
+    if (!link) {
+      link = runtime.document.createElement("link");
+      link.rel = "icon";
+      link.setAttribute?.("rel", "icon"); // 兜住不做属性反射的极简 DOM shim
+      (runtime.document.head ?? runtime.target).appendChild(link);
+    }
+    const raw = String(svgOrUrl ?? "");
+    link.href = raw.startsWith("<svg")
+      ? "data:image/svg+xml," + encodeURIComponent(raw)
+      : sanitizeUrl(raw, runtime.policy);
     return null;
   });
 
@@ -3128,6 +3167,17 @@ class Runtime {
     this.links = null;
     this.rootScope = new Scope(this, null, "app");
     this.routeSignal = new Signal(this, createRouteSnapshot(this.window), false, "$route");
+    // 【0.4 全权接管】宿主窗口滚动状态封装为内核只读 Signal（$scroll）。
+    this.scrollSignal = new Signal(this, Object.freeze({ x: 0, y: 0 }), false, "$scroll");
+    if (this.window?.addEventListener) {
+      this.listen(this.rootScope, this.window, "scroll", () => {
+        if (this.destroyed) return;
+        this.scrollSignal.set(Object.freeze({
+          x: this.window?.scrollX || 0,
+          y: this.window?.scrollY || 0,
+        }), true);
+      }, { passive: true });
+    }
   }
 
   context(scope = this.rootScope) {
@@ -3292,6 +3342,7 @@ class Runtime {
       if (binding.kind === "signal") binding.signal.detach();
     }
     this.routeSignal?.detach();
+    this.scrollSignal?.detach();
     this.globals?.clear();
     this.rootScope = null;
     this.globals = null;
@@ -3299,6 +3350,7 @@ class Runtime {
     this.machine = null;
     this.links = null;
     this.routeSignal = null;
+    this.scrollSignal = null;
     this.capabilities = null;
     this.initialState = null;
     this.onError = null;
@@ -3349,6 +3401,8 @@ function installEnvironment(runtime, module) {
   }
   table.define("$route", { kind: "signal", signal: runtime.routeSignal });
   reserved.add("$route");
+  table.define("$scroll", { kind: "signal", signal: runtime.scrollSignal });
+  reserved.add("$scroll");
 
   for (const [name, function_] of Object.entries(runtime.capabilities ?? {})) {
     if (reserved.has(name)) throw new JLCRuntimeError(`capability“${name}”与内建名称冲突`);
