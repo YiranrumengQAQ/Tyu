@@ -51,7 +51,7 @@ const COMPOUND_OPCODES = new Map([
 ]);
 
 const RESERVED_READONLY_VALUES = new Set([...BUILTIN_NAMES]);
-const RESERVED_READONLY_SIGNALS = new Set(["$route"]);
+const RESERVED_READONLY_SIGNALS = new Set(["$route", "$scroll"]);
 
 /* ================================================================
  * 词法分析（Tokenizer）
@@ -294,7 +294,15 @@ export class Parser {
 
   terminator() {
     if (this.match(";")) return;
-    if (this.is("}")) return;
+    // 【0.4 自愈引擎】宽容分号截断（ASI）：闭合大括号或文件结束都视作语句自然结束，自动补齐分号。
+    if (this.is("}") || this.current().type === "eof") return;
+
+    const cur = this.current();
+    const nextWords = ["let", "if", "for", "return", "after", "every", "state", "derive", "resource", "action", "view", "style"];
+    if (cur.type === "identifier" && nextWords.includes(cur.value)) {
+      console.warn(`[JLC Parser 自动修复] 行 ${cur.line}: 语句末尾缺少“;”，已自动推断补齐`);
+      return;
+    }
     this.error("语句末尾缺少分号“;”");
   }
 
@@ -622,9 +630,17 @@ export class Parser {
           }
           this.advance();
           let value;
-          if (this.match(":")) value = this.parseExpression();
-          else if (key.type === "identifier") value = { type: "Identifier", name: key.value, loc: key };
-          else this.error("非标识符对象键后缺少冒号");
+          if (this.match(":")) {
+            value = this.parseExpression();
+          } else if (this.match("=")) {
+            // 【0.4 自愈引擎】：容错处理，将误写的 = 自动降级视为 :，不中断编译
+            console.warn(`[JLC Parser 自动修复] 行 ${key.line}: 对象键“${key.value}”后误用了“=”，已自动校正为“:”`);
+            value = this.parseExpression();
+          } else if (key.type === "identifier") {
+            value = { type: "Identifier", name: key.value, loc: key };
+          } else {
+            this.error("非标识符对象键后缺少冒号");
+          }
           properties.push({ key: String(key.value), value, loc: key });
         } while (this.match(",") && !this.is("}"));
       }

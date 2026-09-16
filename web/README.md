@@ -1,64 +1,53 @@
-# JLC 0.3 隔离游乐场
+# JLC OS（0.4 全权内核形态）
 
-`web/` 是 0.3 策略层的**可运行文档**：五个演示应用，每个都是一个独立页面，被控制台用
-`sandbox="allow-scripts"` 的 iframe 装进来。三层防线各自可见、可拨动：
+`web/` 是 0.4 的部署形态：**一个不含任何业务标签的 Bootloader + 一堆纯文本 `.jlc` 应用**。
+没有构建产物、没有 `.html` 业务页、没有 iframe 游乐场——页面加载后，从 DOM 树构建、事件委托、
+动态样式隔离，到 `document.title`、favicon、视口滚动信号与物理 Realm 隔离，整个页面完全由
+仓库根部的内核（`jlc.js` = 编译器 + VM）统一治理。
 
-| 层 | 谁在执行 | 页面上看什么 |
-| --- | --- | --- |
-| 浏览器沙箱 | iframe `sandbox="allow-scripts"`（无 `allow-same-origin`） | 卡片里的「沙箱自检」：`parent.document` / `localStorage` / `cookie` / `top.location` 全部 blocked |
-| 内核策略 | `resolvePolicy` + 静态接口清单 + `fault` 档 | 状态条的 `策略 open/degrade · 指纹 … · 收回 N 项`，以及「被策略收回的接口」列表 |
-| 编译期硬限制 | `jlc-compiler.js` | 「编译台」里 `innerHTML` / `attr:onclick` / `javascript:` URL 在编译期就失败，换任何档都一样 |
+## 运行链路
+
+```text
+浏览器访问  https://<pages>/web/#/todo.jlc
+   │  web/index.html（Bootloader，< 40 行）
+   │    1. 读 location.hash → ./apps/<名>.jlc（默认 todo.jlc）
+   │    2. fetch 纯文本（.jlc 无任何执行权）
+   │    3. JLC.mount(source, "#kernel-viewport", { policy: "open", isolation: "strict", autoDispose: true })
+   ▼
+内核：语法自愈 → 字节码编译 → 验证 → 链接 → VM 接管整个视口
+```
 
 ## 文件
 
 ```text
 web/
-├─ index.html            控制台：全局开关 + 每个应用一张卡片 + 编译台
-├─ console.js            控制台的逻辑（只通过 postMessage 与沙箱页说话）
-├─ app-page.js           沙箱页宿主胶水（装载 .jbc、注册 capability、上报 ledger、跑隔离自检）
-├─ playground.css        共享样式
-├─ jlc-runtime.js  ─┐ 生成物：把 jlc-vm.js / jlc.js 剥掉 ESM 语法拼成经典脚本，
-├─ jlc-full.js     ─┘ 这样 file:// 与 opaque origin 下都不会被 module CORS 拦住
-├─ registry.js          生成物：应用元数据 + 接口清单 + 各档位收回预告
-└─ apps/
+├─ index.html          Bootloader：唯一的物理挂载点 #kernel-viewport + 哈希路由
+└─ apps/               业务全部是纯文本 .jlc，直接拉取零执行风险
    ├─ todo.jlc            strict 档：纯 state/derive/each，无宿主接口
-   ├─ palette.jlc         open 档：style 前缀作用域 + 字面量 data: URL（strict 下被中和）
-   ├─ html-preview.jlc    open 档 + 隔离域：iframe/srcdoc 富文本预览，防抖 + capability
-   ├─ json-browser.jlc    open 档：resource + data: 端点（离线可跑）+ loading/error 分支
-   ├─ tracer.jlc          open 档：every 定时器 / emit / on:x.window / storage capability
-   └─ *.html              生成物：内联 base64 .jbc 的自包含页面
+   ├─ palette.jlc         open 档：style 前缀作用域 + 字面量 data: URL
+   ├─ html-preview.jlc    open 档：iframe/srcdoc 富文本预览，防抖，纯内核展开文档
+   ├─ json-browser.jlc    open 档：resource + data: 端点（离线可跑）
+   └─ tracer.jlc          open 档：every 定时器 / emit / on:x.window，计数全在内核状态里
 ```
 
 ## 用法
 
 ```bash
-npm run build:web   # 改了 *.jlc 或运行时源码后重新生成
-npm run serve       # → http://localhost:8080/
-npm run check:web   # 只比对产物，漂移就退出码 1（npm run check 会带上它）
+npm run serve       # → http://localhost:8080/web/#/todo.jlc（带 COOP/COEP）
+npm run build:web   # 预检：逐个编译 .jlc 并做 .jbc 往返，挡在部署之前
+npm run check:web   # 同上（npm run check 会带上它）
 ```
 
-GitHub Pages 直接服务 `web/` 也能跑（页面零网络请求），只是没有 COOP/COEP，
-`crossOriginIsolated` 会是 ✗——iframe 沙箱不依赖它，隔离自检的结果也一样。
+GitHub Pages 直接托管仓库即可：`#/todo.jlc`、`#/tracer.jlc`……换哈希就是换应用。
+`.jlc` 改完不需要任何构建步骤；`npm run build:web` 只是把语法/策略错误提前到 CI。
 
-## 手动打开单个页面
+## 0.4 的内核接管面
 
-每个 `apps/<名>.html` 都能独立打开（含 `file://`），并用查询串控制策略：
-
-```text
-./web/apps/html-preview.html?policy=strict&fault=stop&isolation=soft
-./web/apps/tracer.html?policy=open&fault=degrade&maxSteps=200000
-./web/apps/palette.html?policy={"profile":"open","allowDataUrls":false}
-```
-
-`policy` 可以是档名，也可以是一段 JSON 覆盖项（URL 编码后传入）。`fault` 是
-`stop | degrade | report`，`isolation` 是 `soft | strict`，`maxSteps` 是实例累计指令预算。
-
-## 页面之间只有一条通道
-
-控制台 → 沙箱页：`jlc:relaunch`（换档重载）、`jlc:load`（注入新 `.jbc`）、`jlc:probe`、`jlc:ping`。
-沙箱页 → 控制台：`jlc:hello`、`jlc:mounted`、`jlc:stats`（每 400ms 的 `ledger()`）、
-`jlc:fault`、`jlc:denied`、`jlc:capability`、`jlc:isolation`、`jlc:error`。
-
-沙箱页只接受 `event.source === window.parent` 的指令；控制台从不试图读 `contentDocument`。
-「编译台」是这套关系的镜像演示：编译发生在**有编译器的同源页面**，跨过那条通道递过去的
-只有字节码——部署到生产时，用户手上永远只有 `jlc-vm.js` 和 `.jbc`。
+| 面 | 入口 | 策略闸 |
+| --- | --- | --- |
+| 标题 | `title("…")` | `allowDocumentTitle` |
+| Favicon | `favicon("<svg…/>")` 或 `favicon("…url")`（SVG 转 data: URL，其余走净化） | `allowDocumentTitle` |
+| 滚动 | 只读信号 `$scroll = { x, y }`，内核代持 `window` scroll 监听 | 无（只读） |
+| 路由 | 只读信号 `$route` | 无（只读） |
+| 物理隔离 | `isolation: "strict"` 下，任何把节点插出应用子树的行为直接 `JLCIsolationError` | 挂载选项 |
+| 语法自愈 | 对象键误写 `=` 自动按 `:` 解析；语句漏分号在关键字/`}`/EOF 前自动补齐 | 编译期 |

@@ -13,11 +13,13 @@ JLC 源码 → Tokenizer → Parser → 优化器 → Code Generator ──→ .
             jlc-vm.js：Verifier → Linker → 栈式 VM 调度循环 → DOM / Effects
 ```
 
-> 当前版本：`0.3.0`，零运行时依赖，ES Module，可直接在现代浏览器运行。
+> 当前版本：`0.4.0`，零运行时依赖，ES Module，可直接在现代浏览器运行。
 >
 > 0.3 把「安全」从散落的黑名单变成一个可管理的**策略层**：三档 profile、静态接口清单
 > （`.jbc` v2 的 MANIFEST 段）、`stop / degrade / report` 三档 fault、实例隔离域与配额。
-> 仓库里的[多页游乐场](./web/index.html)把每一层都做成了可现场拨动的开关。
+> 0.4 进一步**全权接管宿主**：宽容自愈解析（`=` 当 `:`、自动补分号）、`title()` /
+> `favicon()`、只读 `$scroll` 信号、`isolation: "strict"` 的物理 Realm 断言；
+> [JLC OS](./web/index.html) 是一个不到 40 行的 Bootloader，业务全部是纯文本 `.jlc`。
 
 ## 策略层：一次声明，三处生效
 
@@ -61,21 +63,19 @@ JLC.checkPolicy(program, "open");        // []（open 档授予 frame）
 （fault 档才有意义）。`.jbc` v2 的 MANIFEST 段镜像这份清单，但权威版本由验证器从指令流
 重算——改写清单既拿不到权限，也藏不住接口。
 
-## 多页游乐场（`web/`）
+## JLC OS（`web/`，0.4 部署形态）
 
 ```bash
-npm run build:web   # 编译 web/apps/*.jlc → 自包含沙箱页 + 注册表 + 浏览器可用的运行时
-npm run serve       # 零依赖静态服务器（带 COOP/COEP，crossOriginIsolated 可用）
+npm run build:web   # 预检：逐个编译 web/apps/*.jlc + .jbc 往返，不产出任何文件
+npm run serve       # 零依赖静态服务器（带 COOP/COEP）→ http://localhost:8080/web/#/todo.jlc
 ```
 
-打开 `http://localhost:8080/`：控制台把 5 个演示应用各装进一个
-`sandbox="allow-scripts"` 的 iframe（opaque origin，无同源特权），每个页面内联自己的
-`.jbc`、只加载**不含编译器**的运行时。左侧的 profile / fault / isolation / 配额开关通过
-`postMessage` 让沙箱页原地重挂载，右边实时显示 `ledger()`、被授予与被收回的接口，以及一份
-**在沙箱内部跑的隔离自检**（试探 `parent.document`、`localStorage`、`cookie`、`top.location`）。
-「编译台」演示部署形态的反面：只有控制台（同源、有编译器）能编译源码，产出的字节码注入
-给沙箱页——沙箱页自始至终没有 `Tokenizer`/`Parser`，`JLCVM.compile()` 直接抛错。
-`npm run check` 会重新编译全部应用并与页面里的字节码逐字节比对，防止产物漂移。
+`web/index.html` 是一个不到 40 行的 **Bootloader**：读 `location.hash`，把
+`./apps/<名>.jlc` 当纯文本 `fetch` 进来，全权交给 `JLC.mount(source, "#kernel-viewport",
+{ policy: "open", isolation: "strict", autoDispose: true })`。语法自愈、字节码编译、
+DOM/事件/样式接管、`document.title`、favicon、`$scroll` 与物理隔离域，全部由内核完成——
+`web/apps/` 里没有任何 `.html`，`.jlc` 直接拉取时无执行权。GitHub Pages 直接托管仓库即可，
+换哈希就是换应用（`#/todo.jlc`、`#/tracer.jlc`……）。
 
 ## 两段式架构：编译一次，任意 VM 运行
 
@@ -277,10 +277,10 @@ createVMKernel(options?)                         // 仅运行时内核（jlc-vm.
 ## 开发
 
 ```bash
-npm test           # 57 个用例：语言、VM、策略层、游乐场产物
-npm run check      # 语法检查 + 游乐场产物漂移 + 全量测试
-npm run build:web  # 重新生成 web/（沙箱页、运行时经典脚本、注册表）
-npm run serve      # 本地起游乐场（带 COOP/COEP）
+npm test           # 60 个用例：语言、VM、策略层、JLC OS 部署形态
+npm run check      # 语法检查 + .jlc 应用预检 + 全量测试
+npm run build:web  # 预检全部 .jlc 应用（编译 + .jbc 往返），无产物
+npm run serve      # 本地起 JLC OS（带 COOP/COEP）
 ```
 
 测试覆盖原有全部行为（解析错误、响应式派生、事件、双向绑定、条件分支、keyed 列表复用、
@@ -292,8 +292,10 @@ VM 套件：字节码结构与反汇编、`.jbc` 往返序列化、验证器对�
 `SYSCALLS` 映射、静态接口清单（含 MANIFEST 伪造与往返）、硬限制与策略拒绝的分界、
 三档 fault 的行为差异、URL 中和、frame 托管 `sandbox`、样式作用域、DOM/样式/HTML 配额、
 隔离域越界与自动 dispose、窗口事件授权、capability 白名单、`ledger()` 计数归零。
-`test/web.test.js` 则直接消费 `web/` 产物：用仅运行时的经典脚本挂载页面内联的字节码、
-校验每个沙箱页里的 `.jbc` 与源文件重新编译逐字节相同、确认 VM 内核确实无法编译源码。
+`test/web.test.js` 守 0.4 的部署形态：Bootloader 的结构与哈希路由、`web/apps/` 的去
+`.html` 化、每个 `.jlc` 在声明策略档下的编译预检与全权挂载、自愈解析（`=` 当 `:`、
+漏分号自动补齐）、`favicon()` 的 data: 编码与策略闸、只读 `$scroll` 信号，以及
+`isolation: "strict"` 对越界插入的拒绝。
 
 ## License
 
