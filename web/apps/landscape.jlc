@@ -1,0 +1,862 @@
+/**
+ * @jlc-page
+ * name: landscape
+ * policy: open
+ * isolation: strict
+ * fault: degrade
+ */
+
+app LandscapePro {
+
+  /* ============================================================
+   * 状态定义
+   * ============================================================ */
+
+  state theme = "dark";
+  state seed = 1;
+  state images = range(1, 13);
+  state viewMode = "gallery"; // "gallery" | "app"
+
+  /* 彩蛋状态 */
+  state yearClicks = 0;
+  state stoneClicks = 0;
+  state stoneVisible = false;
+  state stoneModalActive = false;
+
+  /* 分析器配置 */
+  state toyLength = 15;
+  state toyDiameter = 3;
+  state totalCount = 10;
+  state experience = "intermediate";
+  state useLube = false;
+  state showMotivation = true;
+
+  /* 计算与会话 */
+  state hasCalculated = false;
+  state actionDelay = 0;
+  state safetyScore = 100;
+  state originalDelay = 0;
+
+  state isRunning = false;
+  state isPaused = false;
+  state currentCycle = 0;
+  state insertions = 0;
+  state timerSeconds = 0;
+  state remainingSeconds = 0;
+  state showCelebration = false;
+
+  state logs = [
+    { type: "info", icon: "[i]", text: "系统就绪 — 纯前端 JLC 内核运行中" }
+  ];
+
+  /* ============================================================
+   * 派生状态 (Derive)
+   * ============================================================ */
+
+  derive isDark = theme == "dark";
+  derive expMultiplier = (experience == "beginner" ? 1.5 : (experience == "advanced" ? 0.7 : (experience == "expert" ? 0.5 : 1.0)));
+  derive expLabel = (experience == "beginner" ? "初级" : (experience == "advanced" ? "高级" : (experience == "expert" ? "专家级" : "中级")));
+  
+  derive progressPct = clamp(round(currentCycle * 100 / max(1, totalCount)), 0, 100);
+  derive timerFormatted = formatSeconds(timerSeconds);
+  derive remainingFormatted = formatSeconds(remainingSeconds);
+
+  derive safetyLevel = safetyScore >= 80 ? "high" : (safetyScore >= 50 ? "medium" : "low");
+  derive safetyColor = safetyScore >= 80 ? "var(--md-sys-color-success)" : (safetyScore >= 50 ? "var(--md-sys-color-warning)" : "var(--md-sys-color-error)");
+  derive safetyIcon = safetyScore >= 80 ? "✅" : (safetyScore >= 50 ? "⚠️" : "🚨");
+  derive safetyDesc = safetyScore >= 80 ? "安全级别: 良好 · 当前配置舒适安全。" : (safetyScore >= 50 ? "安全级别: 中等 · 建议增加润滑并保持缓慢。" : "安全级别: 警告 · 强烈建议充分润滑并放慢速度。");
+
+  /* ============================================================
+   * 业务动作 (Actions)
+   * ============================================================ */
+
+  action toggleTheme() {
+    theme = theme == "dark" ? "light" : "dark";
+  }
+
+  action refreshGallery() {
+    seed = seed + 1;
+    addLog("画廊已刷新", "info");
+  }
+
+  /* 彩蛋逻辑 */
+  action clickYear() {
+    yearClicks = yearClicks + 1;
+    if (yearClicks >= 10) {
+      yearClicks = 0;
+      stoneModalActive = true;
+      after (2000) {
+        stoneModalActive = false;
+        stoneVisible = true;
+      }
+    }
+  }
+
+  action clickStone() {
+    if (!stoneVisible) { return; }
+    stoneClicks = stoneClicks + 1;
+    if (stoneClicks >= 10) {
+      stoneClicks = 0;
+      stoneVisible = false;
+      viewMode = "app";
+      title("愉悦分析 Pro · JLC 全权内核");
+      addLog("已通过彩蛋解锁进入「愉悦分析 Pro」", "success");
+    }
+  }
+
+  action exitApp() {
+    stopSession();
+    viewMode = "gallery";
+    stoneVisible = false;
+    yearClicks = 0;
+    stoneClicks = 0;
+    title("风景集 · JLC 0.4.0");
+  }
+
+  action toggleLube() {
+    useLube = !useLube;
+  }
+
+  action toggleMotivation() {
+    showMotivation = !showMotivation;
+  }
+
+  action setLength(val) {
+    toyLength = clamp(number(val), 1, 150);
+  }
+
+  action setDiameter(val) {
+    toyDiameter = clamp(number(val), 0.5, 10);
+  }
+
+  action setCount(val) {
+    let c = clamp(round(number(val)), 2, 100);
+    if (c % 2 != 0) { c = c + 1; }
+    totalCount = c;
+  }
+
+  action setExperience(val) {
+    experience = val;
+  }
+
+  action addLog(msg, type = "info") {
+    let icon = "[i]";
+    if (type == "insert") { icon = "[IN]"; }
+    else if (type == "withdraw") { icon = "[OUT]"; }
+    else if (type == "success") { icon = "[OK]"; }
+    else if (type == "warn") { icon = "[!]"; }
+
+    let entry = { type: type, icon: icon, text: msg };
+    let next = append(logs, entry);
+    if (len(next) > 40) {
+      next = slice(next, len(next) - 40, len(next));
+    }
+    logs = next;
+  }
+
+  action calculate() {
+    let mult = expMultiplier;
+    let base = ((number(toyLength) / 30) + (number(toyDiameter) / 3) + 1.2) * mult;
+    originalDelay = base;
+    actionDelay = max(0.2, useLube ? base * 0.70 : base);
+
+    let safety = 100;
+    if (number(toyLength) > 100) { safety = safety - 20; }
+    else if (number(toyLength) > 50) { safety = safety - 10; }
+
+    if (number(toyDiameter) > 6) { safety = safety - 25; }
+    else if (number(toyDiameter) > 4) { safety = safety - 15; }
+    else if (number(toyDiameter) > 3) { safety = safety - 5; }
+
+    if (experience == "beginner" && number(toyDiameter) > 4) { safety = safety - 10; }
+    if (useLube) { safety = safety + 20; } else { safety = safety - 25; }
+
+    safetyScore = clamp(safety, 0, 100);
+    hasCalculated = true;
+    remainingSeconds = round(number(totalCount) * actionDelay);
+
+    addLog("计算完成: 频率 " + string(round(actionDelay * 100) / 100) + " 秒/次 · 安全分 " + string(safetyScore), "success");
+  }
+
+  action startSession() {
+    if (!hasCalculated) {
+      addLog("请先点击计算分析", "warn");
+      return;
+    }
+    isRunning = true;
+    isPaused = false;
+    currentCycle = 0;
+    insertions = 0;
+    timerSeconds = 0;
+    showCelebration = false;
+    remainingSeconds = round(number(totalCount) * actionDelay);
+
+    addLog("进程已正式启动", "success");
+    runCycle();
+  }
+
+  action runCycle() {
+    if (!isRunning || isPaused) { return; }
+    if (currentCycle >= totalCount) {
+      completeSession();
+      return;
+    }
+
+    currentCycle = currentCycle + 1;
+    remainingSeconds = max(0, round((number(totalCount) - currentCycle) * actionDelay));
+
+    if (currentCycle % 2 == 1) {
+      insertions = insertions + 1;
+      let lubeHint = useLube ? " [润滑加成]" : "";
+      addLog("进入 >>> 第 " + string(insertions) + " 次" + lubeHint, "insert");
+    } else {
+      addLog("拔出 <<< 完全拔出", "withdraw");
+    }
+
+    let delayMs = round(actionDelay * 1000);
+    after (delayMs) {
+      runCycle();
+    }
+  }
+
+  action togglePause() {
+    isPaused = !isPaused;
+    if (isPaused) {
+      addLog("进程已暂停", "warn");
+    } else {
+      addLog("进程继续恢复", "info");
+      runCycle();
+    }
+  }
+
+  action stopSession() {
+    isRunning = false;
+    isPaused = false;
+    addLog("进程已强制结束", "warn");
+  }
+
+  action completeSession() {
+    isRunning = false;
+    showCelebration = true;
+    addLog("进程圆满完成！已达成 " + string(insertions) + " 次循环", "success");
+    after (2500) {
+      showCelebration = false;
+    }
+  }
+
+  action formatSeconds(sec) {
+    let s = max(0, round(number(sec)));
+    let m = floor(s / 60);
+    let remS = s % 60;
+    let mStr = m < 10 ? "0" + string(m) : string(m);
+    let sStr = remS < 10 ? "0" + string(remS) : string(remS);
+    return mStr + ":" + sStr;
+  }
+
+  /* ============================================================
+   * 样式系统 (Material 3)
+   * ============================================================ */
+
+  style `
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      min-height: 100dvh;
+      background: var(--md-bg);
+      color: var(--md-text);
+      line-height: 1.5;
+      transition: background 0.35s ease, color 0.35s ease;
+      overflow-x: hidden;
+    }
+
+    .app {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 20px 80px;
+    }
+
+    .app.dark {
+      --md-bg: #141218;
+      --md-surface: #1E1B24;
+      --md-surface-var: #2B2933;
+      --md-primary: #D0BCFF;
+      --md-on-primary: #381E72;
+      --md-primary-container: #4F378B;
+      --md-on-primary-container: #EADDFF;
+      --md-text: #E6E0E9;
+      --md-muted: #938F99;
+      --md-outline: #49454F;
+      --md-border: rgba(255,255,255,0.08);
+      --md-sys-color-success: #75D88B;
+      --md-sys-color-warning: #F5C542;
+      --md-sys-color-error: #F2B8B5;
+    }
+
+    .app.light {
+      --md-bg: #FFFBFE;
+      --md-surface: #FFFFFF;
+      --md-surface-var: #F5F0FA;
+      --md-primary: #6750A4;
+      --md-on-primary: #FFFFFF;
+      --md-primary-container: #EADDFF;
+      --md-on-primary-container: #21005D;
+      --md-text: #1D1B20;
+      --md-muted: #79747E;
+      --md-outline: #CAC4D0;
+      --md-border: rgba(0,0,0,0.06);
+      --md-sys-color-success: #1E7B3A;
+      --md-sys-color-warning: #9C6D00;
+      --md-sys-color-error: #BA1A1A;
+    }
+
+    /* ---- 顶栏 ---- */
+    .appbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 24px 0 16px;
+      min-height: 64px;
+    }
+    .brand {
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -0.02em;
+    }
+    .brand .accent { color: var(--md-primary); }
+
+    .icon-btn {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      border: none;
+      background: transparent;
+      color: var(--md-text);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.2rem;
+      transition: background 0.2s, transform 0.2s;
+    }
+    .icon-btn:hover { background: var(--md-surface-var); transform: scale(1.05); }
+
+    .subtitle {
+      color: var(--md-muted);
+      font-size: 0.92rem;
+      margin-bottom: 24px;
+    }
+
+    /* ---- 画廊卡片 ---- */
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+      gap: 22px;
+    }
+    .card {
+      background: var(--md-surface);
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid var(--md-border);
+      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
+      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s;
+    }
+    .card:hover {
+      transform: translateY(-6px);
+      box-shadow: 0 12px 28px rgba(0,0,0,0.12);
+    }
+    .card-img-wrap {
+      width: 100%;
+      height: 230px;
+      background: var(--md-surface-var);
+      overflow: hidden;
+    }
+    .card-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+      transition: transform 0.4s ease;
+    }
+    .card:hover .card-img { transform: scale(1.04); }
+    .card-info { padding: 16px 18px; }
+    .card-title { font-weight: 600; font-size: 0.95rem; }
+    .card-meta { font-size: 0.8rem; color: var(--md-muted); margin-top: 4px; }
+
+    /* ---- 底部与 FAB ---- */
+    .footer {
+      text-align: center;
+      margin-top: 60px;
+      padding: 24px 0;
+      color: var(--md-muted);
+      font-size: 0.85rem;
+      border-top: 1px solid var(--md-border);
+    }
+    .year-trigger { cursor: pointer; transition: color 0.2s; }
+    .year-trigger:hover { color: var(--md-primary); }
+
+    .fab {
+      position: fixed;
+      bottom: 26px;
+      right: 26px;
+      width: 56px;
+      height: 56px;
+      border-radius: 18px;
+      border: none;
+      background: var(--md-primary);
+      color: var(--md-on-primary);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.3rem;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+      z-index: 50;
+      transition: transform 0.3s, box-shadow 0.3s;
+    }
+    .fab:hover { transform: scale(1.08) rotate(90deg); }
+
+    /* ---- 石头彩蛋 ---- */
+    .stone {
+      position: fixed;
+      bottom: 96px;
+      right: 28px;
+      width: 44px;
+      height: 38px;
+      cursor: pointer;
+      z-index: 60;
+      background: linear-gradient(145deg, #b0b0b8 0%, #8e8e93 30%, #636366 100%);
+      border-radius: 54% 46% 58% 42% / 44% 56% 40% 60%;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.3);
+      animation: stoneDrop 0.9s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    @keyframes stoneDrop {
+      0% { transform: translateY(-300px); opacity: 0; }
+      100% { transform: translateY(0); opacity: 1; }
+    }
+
+    .modal-mask {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.45);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 99;
+    }
+    .modal-stone {
+      width: 100px;
+      height: 80px;
+      background: linear-gradient(145deg, #b0b0b8, #636366);
+      border-radius: 50%;
+      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+      animation: stoneDrop 0.8s ease;
+    }
+
+    /* ---- Pro 模式视图 ---- */
+    .pro-wrap {
+      max-width: 960px;
+      margin: 0 auto;
+      padding-top: 16px;
+    }
+    .exit-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 20px;
+      border-radius: 9999px;
+      background: var(--md-surface);
+      border: 1px solid var(--md-border);
+      color: var(--md-text);
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 0.86rem;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+    }
+    .pro-header {
+      text-align: center;
+      padding: 28px 20px;
+      background: var(--md-surface);
+      border-radius: 24px;
+      border: 1px solid var(--md-border);
+      margin-bottom: 20px;
+    }
+    .pro-title { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; }
+    .pro-sub { font-size: 0.85rem; color: var(--md-muted); margin-top: 6px; }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 20px;
+    }
+    @media (min-width: 768px) {
+      .grid-2 { grid-template-columns: 1fr 1fr; }
+    }
+
+    .panel {
+      background: var(--md-surface);
+      border-radius: 24px;
+      border: 1px solid var(--md-border);
+      padding: 24px;
+    }
+    .panel-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-bottom: 18px;
+    }
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block;
+      font-size: 0.86rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .input-box {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--md-outline);
+      background: var(--md-surface-var);
+      color: var(--md-text);
+      font-size: 0.95rem;
+      outline: none;
+    }
+    .range-box {
+      width: 100%;
+      margin-top: 8px;
+      accent-color: var(--md-primary);
+    }
+    .check-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--md-surface-var);
+      border-radius: 12px;
+      cursor: pointer;
+      margin-bottom: 14px;
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+    .btn {
+      padding: 12px 24px;
+      border-radius: 9999px;
+      border: none;
+      font-weight: 700;
+      font-size: 0.92rem;
+      cursor: pointer;
+      background: var(--md-primary);
+      color: var(--md-on-primary);
+      transition: transform 0.15s, opacity 0.2s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-outlined {
+      background: transparent;
+      color: var(--md-primary);
+      border: 1px solid var(--md-outline);
+    }
+    .btn-danger {
+      background: var(--md-sys-color-error);
+      color: #fff;
+    }
+
+    /* ---- 实时统计面板 ---- */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .stat-card {
+      background: var(--md-surface-var);
+      border-radius: 16px;
+      padding: 16px;
+      text-align: center;
+    }
+    .stat-label { font-size: 0.72rem; color: var(--md-muted); text-transform: uppercase; font-weight: 700; }
+    .stat-val { font-size: 1.5rem; font-weight: 800; margin-top: 4px; }
+    .progress-bar {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--md-surface-var);
+      overflow: hidden;
+      margin-bottom: 18px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--md-primary);
+      transition: width 0.3s linear;
+    }
+
+    /* ---- 日志系统 ---- */
+    .log-panel {
+      margin-top: 20px;
+      background: var(--md-surface);
+      border-radius: 24px;
+      border: 1px solid var(--md-border);
+      padding: 24px;
+    }
+    .log-box {
+      height: 220px;
+      overflow-y: auto;
+      background: var(--md-surface-var);
+      border-radius: 14px;
+      padding: 12px;
+      font-family: monospace;
+      font-size: 0.84rem;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .log-entry {
+      padding: 6px 10px;
+      border-radius: 6px;
+      background: rgba(0,0,0,0.05);
+    }
+    .log-insert { border-left: 3px solid var(--md-sys-color-error); }
+    .log-withdraw { border-left: 3px solid var(--md-primary); }
+    .log-success { border-left: 3px solid var(--md-sys-color-success); }
+    .log-info { border-left: 3px solid var(--md-sys-color-warning); }
+
+    .celebrate {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 3rem;
+      font-weight: 800;
+      color: var(--md-primary);
+      background: var(--md-surface);
+      padding: 20px 40px;
+      border-radius: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+      z-index: 100;
+    }
+  `;
+
+  /* ============================================================
+   * 视图树 (View Tree)
+   * ============================================================ */
+
+  view {
+    div(class = "app", class:dark = isDark, class:light = !isDark) {
+
+      when (viewMode == "app") {
+
+        /* ==================== 愉悦分析 Pro 视图 ==================== */
+        div(class = "pro-wrap") {
+          button(class = "exit-btn", on:click = { exitApp(); }) {
+            text "← 返回风景画廊";
+          }
+
+          div(class = "pro-header") {
+            h2(class = "pro-title") { text "愉悦分析 Pro"; }
+            p(class = "pro-sub") { text "智能计算 · 物理阻力模型 · 健康状态监测"; }
+          }
+
+          div(class = "grid-2") {
+
+            /* 左面板: 设置参数 */
+            div(class = "panel") {
+              h3(class = "panel-title") { text "参数设置"; }
+
+              div(class = "check-row", on:click = { toggleLube(); }) {
+                input(attr:type = "checkbox", bind:checked = useLube)
+                span { text "使用润滑液 (减少约 30% 摩擦阻力)"; }
+              }
+
+              div(class = "field") {
+                label { text "玩具长度: " + string(toyLength) + " cm"; }
+                input(
+                  class = "input-box",
+                  attr:type = "number",
+                  bind:value = toyLength,
+                  on:change = { setLength($event.value); }
+                )
+                input(
+                  class = "range-box",
+                  attr:type = "range",
+                  attr:min = "1",
+                  attr:max = "150",
+                  bind:value = toyLength,
+                  on:input = { setLength($event.value); }
+                )
+              }
+
+              div(class = "field") {
+                label { text "玩具直径: " + string(toyDiameter) + " cm"; }
+                input(
+                  class = "input-box",
+                  attr:type = "number",
+                  bind:value = toyDiameter,
+                  on:change = { setDiameter($event.value); }
+                )
+                input(
+                  class = "range-box",
+                  attr:type = "range",
+                  attr:min = "0.5",
+                  attr:max = "10",
+                  attr:step = "0.1",
+                  bind:value = toyDiameter,
+                  on:input = { setDiameter($event.value); }
+                )
+              }
+
+              div(class = "field") {
+                label { text "循环次数: " + string(totalCount) + " 次"; }
+                input(
+                  class = "input-box",
+                  attr:type = "number",
+                  attr:min = "2",
+                  attr:max = "100",
+                  bind:value = totalCount,
+                  on:change = { setCount($event.value); }
+                )
+              }
+
+              div(style = "display:flex; gap:10px; margin-top:10px;") {
+                button(class = "btn", on:click = { calculate(); }) { text "计算分析"; }
+                when (hasCalculated && !isRunning) {
+                  button(class = "btn btn-outlined", on:click = { startSession(); }) { text "开始进程"; }
+                }
+              }
+            }
+
+            /* 右面板: 实时监控与统计 */
+            div(class = "panel") {
+              h3(class = "panel-title") { text "实时状态监控"; }
+
+              div(class = "stat-grid") {
+                div(class = "stat-card") {
+                  div(class = "stat-label") { text "已循环次数"; }
+                  div(class = "stat-val") { text string(insertions); }
+                }
+                div(class = "stat-card") {
+                  div(class = "stat-label") { text "当前进度"; }
+                  div(class = "stat-val") { text string(progressPct) + "%"; }
+                }
+                div(class = "stat-card") {
+                  div(class = "stat-label") { text "已耗时"; }
+                  div(class = "stat-val") { text timerFormatted; }
+                }
+                div(class = "stat-card") {
+                  div(class = "stat-label") { text "预估剩余"; }
+                  div(class = "stat-val") { text remainingFormatted; }
+                }
+              }
+
+              div(class = "progress-bar") {
+                div(class = "progress-fill", style:width = string(progressPct) + "%")
+              }
+
+              when (isRunning) {
+                div(style = "display:flex; gap:10px; margin-bottom:16px;") {
+                  button(class = "btn btn-outlined", on:click = { togglePause(); }) {
+                    text isPaused ? "继续" : "暂停";
+                  }
+                  button(class = "btn btn-danger", on:click = { stopSession(); }) {
+                    text "停止";
+                  }
+                }
+              }
+
+              when (hasCalculated) {
+                div(style = "padding:16px; border-radius:14px; background:var(--md-surface-var); border-left:4px solid " + safetyColor + ";") {
+                  div(style = "font-weight:700; color:" + safetyColor + ";") {
+                    text safetyIcon + " " + safetyDesc;
+                  }
+                  div(style = "font-size:0.85rem; margin-top:6px; color:var(--md-muted);") {
+                    text "安全评分: " + string(safetyScore) + " / 100 · 基础间隔: " + string(round(actionDelay * 10) / 10) + "s";
+                  }
+                }
+              }
+            }
+
+          }
+
+          /* 活动日志展示 */
+          div(class = "log-panel") {
+            h3(class = "panel-title") { text "活动执行日志"; }
+            div(class = "log-box") {
+              each (l in logs) {
+                div(class = "log-entry log-" + l.type) {
+                  text l.icon + " " + l.text;
+                }
+              }
+            }
+          }
+        }
+
+      } else {
+
+        /* ==================== 风景画廊主视图 ==================== */
+        header(class = "appbar") {
+          div(class = "brand") {
+            span(class = "accent") { text "风景"; }
+            span { text "集"; }
+          }
+          button(class = "icon-btn", on:click = { toggleTheme(); }, attr:title = "切换明暗主题") {
+            text isDark ? "🌙" : "☀️";
+          }
+        }
+
+        p(class = "subtitle") { text "探索来自世界各地的绝美自然摄影与极简风光"; }
+
+        div(class = "gallery") {
+          each (item in images key item) {
+            article(class = "card") {
+              div(class = "card-img-wrap") {
+                img(
+                  class = "card-img",
+                  attr:src = "https://picsum.photos/seed/jlc_" + string(seed) + "_" + string(item) + "/600/400",
+                  attr:alt = "自然风光",
+                  attr:loading = "lazy"
+                )
+              }
+              div(class = "card-info") {
+                div(class = "card-title") { text "摄影作品 #" + string(seed * 12 + item); }
+                div(class = "card-meta") { text "600 × 400 · 绝美自然"; }
+              }
+            }
+          }
+        }
+
+        footer(class = "footer") {
+          p { text "图片由 Picsum CDN 实时呈现 · 每次刷新均由 JLC 虚拟状态机确定性渲染"; }
+          p {
+            span { text "© "; }
+            span(class = "year-trigger", on:click = { clickYear(); }) { text "2026"; }
+            span { text " 风景集 · 保留所有权利"; }
+          }
+        }
+
+        /* 刷新按钮 (FAB) */
+        button(class = "fab", on:click = { refreshGallery(); }, attr:title = "刷新画廊") {
+          text "🔄";
+        }
+
+        /* 彩蛋石头模态框 */
+        when (stoneModalActive) {
+          div(class = "modal-mask") {
+            div(class = "modal-stone")
+          }
+        }
+
+        /* 掉落的隐藏石头 */
+        when (stoneVisible) {
+          div(class = "stone", on:click = { clickStone(); }, attr:title = "奇异的鹅卵石")
+        }
+
+      }
+
+      /* 庆祝弹窗 */
+      when (showCelebration) {
+        div(class = "celebrate") {
+          text "✨ 进程圆满完成 ✨";
+        }
+      }
+
+    }
+  }
+}
