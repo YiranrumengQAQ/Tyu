@@ -5,6 +5,7 @@
  * isolation: soft
  * capabilities:
  * demo: 重新载入只发一次请求；loading / error / 成功由 resource 快照驱动。strict 档仍然授予 host:http（清单里没有 url:data——端点是派生值，静态判不出），但写入时的 sanitizer 会把 data: URL 中和掉：看右上角 neutralized 计数与 error 徽章
+ * 注：entries() 返回 [key, value] 元组，用 at(row, 0) / at(row, 1) 取键值
  */
 app JsonBrowser {
   state picked = -1;
@@ -56,10 +57,10 @@ app JsonBrowser {
         table(class = "json-table") {
           thead { tr { th { text "键"; } th { text "值"; } } }
           tbody {
-            each (row, index in rows key row.key) {
+            each (row, index in rows key at(row, 0)) {
               tr(data:picked = picked == index ? 1 : 0, on:click = { choose(index); }) {
-                th { text row.key; }
-                td { text string(row.value); }
+                th { text at(row, 0); }
+                td { text string(at(row, 1)); }
               }
             } else {
               tr { td { text "还没有数据"; } }

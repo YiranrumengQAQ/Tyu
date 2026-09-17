@@ -38,7 +38,9 @@ const TYPES = new Map([
   [".jlc", "text/plain; charset=utf-8"],
   [".jbc", "application/octet-stream"],
   [".svg", "image/svg+xml"],
+  [".png", "image/png"],
   [".ico", "image/x-icon"],
+  [".webmanifest", "application/manifest+json; charset=utf-8"],
   [".map", "application/json; charset=utf-8"],
 ]);
 
@@ -59,9 +61,11 @@ function securityHeaders(pathname) {
     headers["Content-Security-Policy"] = [
       "default-src 'none'",
       "script-src 'self' 'unsafe-inline'",
-      "style-src 'unsafe-inline'",
+      // 0.5 外壳用外链 shell.css + manifest.webmanifest（0.4 仍只靠内联样式，互不影响）
+      "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "connect-src 'self' data:",
+      "manifest-src 'self'",
       "object-src 'none'",
       "base-uri 'none'",
       "form-action 'none'",

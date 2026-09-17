@@ -1,0 +1,18 @@
+{
+  "comment": "JLC OS 0.5 应用目录。dir=system → web/0.5/apps/（宿主自带，trusted 档）；dir=shared → web/apps/（0.4 应用，按各自声明的档位运行）。同名时 system 覆盖 shared。新增 .jlc 应用后在这里登记一行即可。",
+  "apps": [
+    { "name": "home", "dir": "system", "icon": "🏠" },
+    { "name": "apps", "dir": "system", "icon": "📦" },
+    { "name": "files", "dir": "system", "icon": "🗂" },
+    { "name": "permissions", "dir": "system", "icon": "🛡" },
+    { "name": "settings", "dir": "system", "icon": "⚙" },
+    { "name": "todo", "dir": "system", "icon": "✅" },
+    { "name": "notes", "dir": "system", "icon": "📝" },
+    { "name": "todo", "dir": "shared", "icon": "✅" },
+    { "name": "palette", "dir": "shared", "icon": "🎨" },
+    { "name": "json-browser", "dir": "shared", "icon": "🧾" },
+    { "name": "html-preview", "dir": "shared", "icon": "🪟" },
+    { "name": "tracer", "dir": "shared", "icon": "📈" },
+    { "name": "landscape", "dir": "shared", "icon": "🏞" }
+  ]
+}

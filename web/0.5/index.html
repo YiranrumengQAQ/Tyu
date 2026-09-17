@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>JLC OS 0.5</title>
+  <meta name="description" content="JLC OS 0.5：跑在 GitHub Pages 上的纯前端超级宿主——权限可控、可离线、可持久化、可操作本地文件。" />
+  <meta name="theme-color" content="#f6f5f0" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="./icons/icon-192.png" />
+  <link rel="stylesheet" href="./shell.css" />
+  <script>
+    /* 首屏主题：在样式表之前落 data-theme，避免闪烁（深色模式）。 */
+    (function () {
+      try {
+        var raw = localStorage.getItem("jlc05-theme");
+        var theme = raw === "light" || raw === "dark" ? raw
+          : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.dataset.theme = theme;
+      } catch (error) { /* 忽略 */ }
+    })();
+  </script>
+</head>
+<body>
+  <header id="os-topbar">
+    <div class="os-brand" title="回到首页">
+      <span class="os-mark">◈</span>
+      <span>JLC&nbsp;OS</span>
+      <span class="os-ver">0.5</span>
+    </div>
+    <div id="os-app-title" class="os-app-title"><span class="os-app-name">JLC OS</span></div>
+    <div class="os-actions">
+      <span id="os-net" class="os-badge" hidden>在线</span>
+      <span id="os-sw" class="os-badge os-badge--ghost" hidden>离线就绪</span>
+      <button id="os-install" class="os-btn os-btn--small" hidden>安装</button>
+      <button id="os-fullscreen" class="os-btn os-btn--small" title="全屏" aria-label="全屏">⛶</button>
+      <a class="os-link" href="../" title="回到 JLC OS 0.4 Bootloader">0.4</a>
+    </div>
+  </header>
+
+  <main id="os-main">
+    <div id="app-viewport"></div>
+    <div id="os-fatal" hidden></div>
+  </main>
+
+  <nav id="os-nav" aria-label="JLC OS 导航">
+    <a href="#/home.jlc" data-app="home"><span class="os-nav-ico">🏠</span><span>首页</span></a>
+    <a href="#/apps.jlc" data-app="apps"><span class="os-nav-ico">📦</span><span>应用</span></a>
+    <a href="#/files.jlc" data-app="files"><span class="os-nav-ico">🗂</span><span>文件</span></a>
+    <a href="#/permissions.jlc" data-app="permissions"><span class="os-nav-ico">🛡</span><span>权限</span></a>
+    <a href="#/settings.jlc" data-app="settings"><span class="os-nav-ico">⚙</span><span>设置</span></a>
+  </nav>
+
+  <div id="os-sheets" hidden></div>
+  <div id="os-toasts" hidden></div>
+
+  <script type="module">
+    import { JLC, VERSION } from "../../jlc.js";
+    import { createHost } from "./host/index.js";
+
+    const host = createHost({
+      kernel: JLC,
+      kernelVersion: VERSION,
+      viewport: document.getElementById("app-viewport"),
+      catalogUrl: "./apps.json",
+      swUrl: "../../sw.js",
+    });
+    host.start().catch((error) => {
+      console.error("[0.5 host] 启动失败", error);
+      const panel = document.getElementById("os-fatal");
+      panel.hidden = false;
+      panel.textContent = "JLC OS 0.5 启动失败：" + (error && error.message ? error.message : error);
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,154 @@
+/** @jlc-page
+ * title: 本地笔记
+ * summary: 多条笔记 + IndexedDB 持久化 + 复制 / 导出 .txt；所有内容只存在你浏览器里
+ * policy: strict
+ * isolation: soft
+ * capabilities: storage, clipboard, files
+ * storage: notes, currentId, draftTitle, draftBody
+ * demo: 切换 / 新建 / 删除自动落盘；导出走 Blob 下载；复制走剪贴板 capability
+ */
+app LocalNotes {
+  state notes = [
+    { id: 1, title: "欢迎", body: "这是 0.5 的本地笔记。\n\n所有内容只存在你浏览器的 IndexedDB 里，刷新不丢、断网可写、不经过任何服务器。" }
+  ];
+  state nextId = 2;
+  state currentId = 1;
+  state draftTitle = "欢迎";
+  state draftBody = "这是 0.5 的本地笔记。\n\n所有内容只存在你浏览器的 IndexedDB 里，刷新不丢、断网可写、不经过任何服务器。";
+
+  derive noteCount = len(notes);
+
+  action persist() {
+    storagePut("notes", notes);
+    storagePut("currentId", currentId);
+    storagePut("draftTitle", draftTitle);
+    storagePut("draftBody", draftBody);
+    return null;
+  }
+
+  action newNote() {
+    let id = nextId;
+    nextId += 1;
+    notes = append(notes, { id: id, title: "笔记 " + string(id), body: "" });
+    select(id);
+    return null;
+  }
+
+  action select(id) {
+    currentId = id;
+    for (n in notes) {
+      if (n.id == id) {
+        draftTitle = n.title;
+        draftBody = n.body;
+      }
+    }
+    persist();
+    return null;
+  }
+
+  action removeNote(id) {
+    let next = [];
+    let fallbackId = 0;
+    for (n in notes) {
+      if (n.id != id) {
+        next = append(next, n);
+        if (fallbackId == 0) { fallbackId = n.id; }
+      }
+    }
+    notes = next;
+    if (currentId == id) {
+      if (len(next) > 0) { select(fallbackId); }
+      else {
+        currentId = 0;
+        draftTitle = "";
+        draftBody = "";
+        persist();
+      }
+    } else {
+      persist();
+    }
+    return null;
+  }
+
+  action saveNow() {
+    persist();
+    return null;
+  }
+
+  action copyCurrent() {
+    clipboardWrite(draftTitle + "\n\n" + draftBody);
+    return null;
+  }
+
+  action exportCurrent() {
+    let name = trim(draftTitle);
+    if (name == "") { name = "note-" + string(currentId); }
+    download(name + ".txt", draftTitle + "\n\n" + draftBody, "text/plain;charset=utf-8");
+    return null;
+  }
+
+  style `
+    .notes { display: grid; gap: 12px; }
+    .notes h1 { margin: 0; font: 800 20px/1.3 var(--display); }
+    .notes-grid { display: grid; grid-template-columns: minmax(170px, 220px) minmax(0, 1fr); gap: 12px; align-items: start; }
+    @media (max-width: 700px) { .notes-grid { grid-template-columns: 1fr; } }
+    .notes-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
+    .notes-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 9px 11px; cursor: pointer;
+      background: var(--surface); border: 1.5px solid var(--border); border-radius: 10px;
+    }
+    .notes-item.is-current { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary-container); }
+    .notes-item span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+    .notes-item button { border: none; background: none; font-size: 14px; color: var(--muted); }
+    .notes-editor { display: grid; gap: 8px; }
+    .notes-editor input {
+      padding: 9px 11px; border: 2px solid var(--border); border-radius: 10px;
+      background: var(--field); color: var(--ink); font: 700 14px var(--display);
+    }
+    .notes-editor textarea {
+      min-height: 260px; resize: vertical;
+      padding: 11px 12px; border: 2px solid var(--border); border-radius: 10px;
+      background: var(--surface); color: var(--ink); font: 400 14px/1.65 var(--display);
+    }
+    .notes-bar { display: flex; gap: 7px; flex-wrap: wrap; align-items: center; }
+  `;
+
+  view {
+    main(class = "notes") {
+      div {
+        h1 { text "本地笔记"; }
+        p(class = "muted") { text noteCount + " 条 · 切换 / 新建 / 删除自动保存到本机"; }
+      }
+      div(class = "notes-grid") {
+        div {
+          button(class = "os-btn os-btn--small os-btn--filled", on:click = { newNote(); }) { text "＋ 新建笔记"; }
+          ul(class = "notes-list") {
+            each (n in notes key n.id) {
+              li(class = "notes-item" + (n.id == currentId ? " is-current" : ""), on:click = { select(n.id); }) {
+                span { text n.title == "" ? "（无标题）" : n.title; }
+                button(on:click = { removeNote(n.id); }, aria:label = "删除") { text "×"; }
+              }
+            } else {
+              li(class = "muted") { text "还没有笔记"; }
+            }
+          }
+        }
+        div(class = "notes-editor") {
+          when (currentId == 0) {
+            p(class = "muted") { text "选一条笔记，或点「新建笔记」。"; }
+          }
+          when (currentId != 0) {
+            input(bind:value = draftTitle, placeholder = "标题", aria:label = "笔记标题");
+            textarea(bind:value = draftBody, placeholder = "写点什么…", spellcheck = false, aria:label = "笔记正文");
+            div(class = "notes-bar") {
+              button(class = "os-btn os-btn--small os-btn--filled", on:click = { saveNow(); }) { text "💾 保存"; }
+              button(class = "os-btn os-btn--small", on:click = { copyCurrent(); }) { text "📋 复制"; }
+              button(class = "os-btn os-btn--small", on:click = { exportCurrent(); }) { text "📥 导出 .txt"; }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,200 @@
+/** @jlc-page
+ * title: 文件
+ * summary: 本地文件管理：选择器打开 → 内核 resource 读取 → 复制 / 下载 / 分享，最近打开留档
+ * policy: trusted
+ * isolation: soft
+ * fault: degrade
+ * capabilities: files, clipboard, share
+ * demo: fileOpen() 在用户手势里弹选择器并返回 token；jlc://files/result/<token> 由宿主注入的 fetch 异步应答
+ */
+app FileManager {
+  state accept = "";
+  state multi = false;
+  state token = 0;
+  state exportName = "notes.json";
+  state exportDraft = "{\"hello\": \"JLC OS 0.5\"}";
+
+  resource file = http("jlc://files/result/" + token, { as: "auto" });
+  resource recents = http("jlc://files/recents", { as: "auto" });
+
+  derive info = file.data;
+  derive recentList = recents.data == null ? [] : recents.data.items;
+
+  action pick() {
+    token = fileOpen(accept, multi);
+    return null;
+  }
+
+  action setAccept(value) {
+    accept = value;
+    return null;
+  }
+
+  action toggleMulti() {
+    multi = !multi;
+    return null;
+  }
+
+  action copyText() {
+    if (info == null) { return null; }
+    let text = info.text == null ? "" : info.text;
+    clipboardWrite(text);
+    return null;
+  }
+
+  action saveFile() {
+    if (info == null) { return null; }
+    download(info.name, info.text == null ? "" : info.text, info.type == null ? "text/plain" : info.type);
+    return null;
+  }
+
+  action shareFile() {
+    if (info == null) { return null; }
+    share(info.text == null ? "" : info.text, "JLC OS 文件", "");
+    return null;
+  }
+
+  action exportJson() {
+    downloadJson(exportName, parseJson(exportDraft));
+    return null;
+  }
+
+  style `
+    .fm { display: grid; gap: 14px; }
+    .fm h1 { margin: 0; font: 800 22px/1.3 var(--display); }
+    .fm-panel {
+      background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px;
+      padding: 14px; display: grid; gap: 10px;
+    }
+    .fm-bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .fm-bar input[type="text"] {
+      flex: 1; min-width: 140px;
+      padding: 8px 10px; border: 1.5px solid var(--border); border-radius: 9px;
+      background: var(--field); color: var(--ink); font: 500 12px var(--mono);
+    }
+    .fm-preview {
+      margin: 0; padding: 12px; max-height: 300px; overflow: auto;
+      background: var(--code-bg); color: var(--code-ink);
+      border-radius: 10px;
+      font: 500 12px/1.6 var(--mono);
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .fm-img { max-width: 100%; border: 1.5px solid var(--border); border-radius: 10px; display: block; }
+    .fm-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .fm-table th, .fm-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--md-divider); vertical-align: top; }
+    .fm-table thead th { font: 600 10.5px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .fm-mono { font-family: var(--mono); font-size: 11.5px; }
+    .fm-empty { color: var(--muted); font-size: 12.5px; }
+    .fm-export textarea {
+      width: 100%; min-height: 120px; resize: vertical;
+      padding: 10px 12px; border: 1.5px solid var(--border); border-radius: 10px;
+      background: var(--code-bg); color: var(--code-ink);
+      font: 500 12px/1.6 var(--mono);
+    }
+  `;
+
+  view {
+    main(class = "fm") {
+      h1 { text "文件"; }
+      p(class = "muted") { text "打开 → 读取 → 复制 / 下载 / 分享。文件只在本机内存里出现，不上传任何服务器。"; }
+
+      div(class = "fm-panel") {
+        div(class = "fm-bar") {
+          button(class = "os-btn os-btn--small os-btn--filled", on:click = { pick(); }) { text "📁 打开文件"; }
+          input(type = "text", value = accept, readonly = "readonly", aria:label = "文件类型过滤", title = "留空 = 全部类型");
+          label {
+            input(type = "checkbox", checked = multi, on:change = { toggleMulti(); })
+            span(class = "muted") { text "多选"; }
+          }
+        }
+        p(class = "muted") { text "文件类型过滤：.json,.txt,.jlc,.csv 或留空（全部）"; }
+
+        when (file.loading) {
+          p(class = "fm-empty") { text "等待文件读取…"; }
+        }
+        when (file.error != null) {
+          p(class = "fm-empty") { text "还没有文件：" + file.error.message; }
+        }
+        when (info != null) {
+          when (info.kind == "cancelled") {
+            p(class = "fm-empty") { text "刚才的选择被取消了，再点一次「打开文件」。"; }
+          }
+          when (info.kind == "text" || info.kind == "json") {
+            div(class = "fm-bar") {
+              span(class = "badge") { text info.name; }
+              span(class = "badge badge--go") { text info.size + " B · " + info.kind; }
+              button(class = "os-btn os-btn--small", on:click = { copyText(); }) { text "📋 复制"; }
+              button(class = "os-btn os-btn--small", on:click = { saveFile(); }) { text "💾 保存"; }
+              button(class = "os-btn os-btn--small", on:click = { shareFile(); }) { text "📤 分享"; }
+            }
+            pre(class = "fm-preview") { text info.text; }
+          }
+          when (info.kind == "binary") {
+            div(class = "fm-bar") {
+              span(class = "badge") { text info.name; }
+              span(class = "badge") { text info.size + " B · " + (info.type == null ? "未知类型" : info.type); }
+            }
+            when (info.url != null) {
+              img(class = "fm-img", src = info.url, alt = info.name);
+            }
+            p(class = "muted") { text "二进制文件以 data: URL 呈现（open 档允许）；可复制 data: URL 文本："; }
+          }
+          when (info.kind == "multi") {
+            table(class = "fm-table") {
+              thead { tr { th { text "名称"; } th { text "大小"; } th { text "类型"; } } }
+              tbody {
+                each (item in info.items key item.name) {
+                  tr {
+                    td { text item.name; }
+                    td { text item.size + " B"; }
+                    td { text item.type; }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      div(class = "fm-panel") {
+        div(class = "fm-bar") {
+          strong { text "最近打开"; }
+          span(class = "muted") { text len(recentList) + " 条（只存元数据）"; }
+        }
+        when (len(recentList) == 0) {
+          p(class = "fm-empty") { text "还没有记录。"; }
+        }
+        when (len(recentList) > 0) {
+          table(class = "fm-table") {
+            thead { tr { th { text "名称"; } th { text "大小"; } th { text "时间"; } } }
+            tbody {
+              each (item, index in recentList) {
+                tr {
+                  td { text item.name; }
+                  td { text item.size + " B"; }
+                  td(class = "fm-mono") { text string(item.ts); }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      div(class = "fm-panel") {
+        strong { text "导出 JSON"; }
+        p(class = "muted") { text "在左边编辑 JSON，点「下载」直接落到本机磁盘（Blob + <a download>，零服务器）。"; }
+        div(class = "fm-bar") {
+          input(type = "text", bind:value = exportName, aria:label = "导出文件名", style = "max-width:220px;");
+          button(class = "os-btn os-btn--small os-btn--filled", on:click = { exportJson(); }) { text "💾 下载 JSON"; }
+          button(class = "os-btn os-btn--small", on:click = { copyExport(); }) { text "📋 复制"; }
+        }
+        textarea(bind:value = exportDraft, spellcheck = false, aria:label = "JSON 内容");
+      }
+    }
+  }
+
+  action copyExport() {
+    clipboardWrite(exportDraft);
+    return null;
+  }
+}

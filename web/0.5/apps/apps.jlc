@@ -1,0 +1,105 @@
+/** @jlc-page
+ * title: 应用
+ * summary: 应用商店式目录：策略档 / 隔离域 / 能力声明 / 体积，0.4 应用可直接回旧版打开
+ * policy: trusted
+ * isolation: soft
+ * fault: degrade
+ * capabilities:
+ * demo: 被 0.5 同名应用覆盖的 0.4 应用会打「已覆盖」标；点「0.4 打开」走原 Bootloader（整页重载）
+ */
+app AppStore {
+  resource catalog = http("jlc://meta/apps");
+
+  derive apps = catalog.data == null ? [] : catalog.data.apps;
+  derive systemCount = countOrigin(apps, "system");
+  derive sharedCount = countOrigin(apps, "shared");
+
+  action countOrigin(list, origin) {
+    let count = 0;
+    for (app in list) {
+      if (app.origin == origin) { count += 1; }
+    }
+    return count;
+  }
+
+  action openApp(name) {
+    navigate("#/" + name + ".jlc");
+    return null;
+  }
+
+  style `
+    .store { display: grid; gap: 14px; }
+    .store-head h1 { margin: 0; font: 800 22px/1.3 var(--display); }
+    .store-list { display: grid; gap: 10px; }
+    .store-row {
+      display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; gap: 12px; align-items: center;
+      padding: 12px 14px;
+      background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px;
+    }
+    .store-ico {
+      display: grid; place-items: center; width: 42px; height: 42px;
+      font-size: 20px; border-radius: 12px;
+      background: var(--field); border: 1px solid var(--md-divider);
+    }
+    .store-name { font: 700 14.5px/1.35 var(--display); }
+    .store-summary { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .store-meta { margin: 6px 0 0; display: flex; gap: 5px; flex-wrap: wrap; }
+    .store-chip {
+      font: 600 10px/1 var(--mono);
+      padding: 3.5px 7px; border-radius: 6px;
+      background: var(--acc-4); color: var(--muted); border: 1px solid var(--md-divider);
+    }
+    .store-chip-sys { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); border-color: transparent; }
+    .store-chip--warn { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); border-color: transparent; }
+    .store-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  `;
+
+  view {
+    main(class = "store") {
+      div(class = "store-head") {
+        h1 { text "应用目录"; }
+        p(class = "muted") {
+          text systemCount + " 个系统应用（trusted 档）· " + sharedCount + " 个 0.4 应用（按各自声明档运行）";
+        }
+      }
+      when (catalog.loading) {
+        p(class = "muted") { text "正在读取…"; }
+      }
+      when (catalog.error != null) {
+        p(class = "muted") { text "目录加载失败：" + catalog.error.message; }
+      }
+      div(class = "store-list") {
+        each (app in apps key app.name) {
+          div(class = "store-row") {
+            span(class = "store-ico") { text app.icon; }
+            div {
+              div(class = "store-name") { text app.title; }
+              p(class = "store-summary") { text app.summary; }
+              div(class = "store-meta") {
+                span(class = "store-chip" + (app.origin == "system" ? " store-chip-sys" : "")) {
+                  text app.origin == "system" ? "系统" : "0.4";
+                }
+                span(class = "store-chip") { text "policy " + app.policy; }
+                span(class = "store-chip") { text "isolation " + app.isolation; }
+                span(class = "store-chip") { text app.bytes + " B"; }
+                when (app.shadowed) {
+                  span(class = "store-chip store-chip--warn") { text "已被 0.5 同名应用覆盖"; }
+                }
+                each (cap in app.capabilities) {
+                  span(class = "store-chip") { text cap; }
+                }
+              }
+            }
+            div(class = "store-actions") {
+              button(class = "os-btn os-btn--small os-btn--filled", on:click = { openApp(app.name); }) { text "启动"; }
+              when (app.origin == "shared") {
+                a(class = "os-btn os-btn--small", href = "../#" + app.name + ".jlc") { text "0.4 打开"; }
+              }
+            }
+          }
+        }
+      }
+      p(class = "muted") { text "同名规则：0.5 系统目录优先，#/<name>.jlc 永远先落到 0.5。0.4 的 Bootloader（../）不受影响。"; }
+    }
+  }
+}
