@@ -13,7 +13,8 @@ JLC 源码 → Tokenizer → Parser → 优化器 → Code Generator ──→ .
             jlc-vm.js：Verifier → Linker → 栈式 VM 调度循环 → DOM / Effects
 ```
 
-> 当前版本：`0.6.0`（ABI `jlc-abi/3`，字节码 v3），零运行时依赖，ES Module，可直接在现代浏览器运行。
+> 当前版本：`0.6.1`（ABI `jlc-abi/3`，字节码 v3 —— 0.6.1 不升 ABI，0.4 / 0.5 / 0.6 的 .jbc 全部继续跑），
+> 零运行时依赖，ES Module，可直接在现代浏览器运行。
 >
 > 0.3 把「安全」从散落的黑名单变成一个可管理的**策略层**：三档 profile、静态接口清单
 > （`.jbc` v2 的 MANIFEST 段）、fault 档、实例隔离域与配额。
@@ -23,6 +24,14 @@ JLC 源码 → Tokenizer → Parser → 优化器 → Code Generator ──→ .
 > **0.6 升级的是 VM 本身**：多趟验证器（CFG + 抽象栈类型）、能力图与权限内核、
 > 资源内核、六级故障阶梯、检查点回滚，以及「预算耗尽就保存现场、让出、下一轮续跑」的
 > 协作式调度。改造细节见 [docs/0.6-blueprint.md](./docs/0.6-blueprint.md)。
+> **0.6.1 是性能内核版（Full Runtime Takeover / Performance Kernel）**：0.6 的接管能力
+> 全部变成大型项目可承载的执行形态——Scheduler v2.1（老化 / 车道配额 / 饥饿营救）、
+> VM Frame Budget、DOM Transaction + Mutation Coalescing、EACH Diff Engine 2 + Keyed
+> Node Cache、Reactive Batch 2.0 + Dependency Graph、Profile 2.0、Hot Path Cache、
+> 资源 soft/hard 双限额、Memory Accountant、Delta Checkpoint、故障自动升级、
+> Leak Detector、Network Scheduler 与 Cancellation Kernel。
+> 细节见 [docs/0.6.1-perf-kernel.md](./docs/0.6.1-perf-kernel.md)，
+> [0.6.1 Runtime Console](./web/0.6/index.html) 以 `runtime: "full"` 演示全部表面。
 
 ## 0.6 内核：一句话一次
 
@@ -50,6 +59,26 @@ JLC.verify(program);             // 11 趟验证报告（永不抛异常）
 JLC.graph(program);              // 控制流图 dump
 JLC.analyze(program);            // CFG 统计 / 能力路径 / 确定性判定
 JLC.profileAll();                // 全内核诊断汇总（系统监视器直接渲染）
+```
+
+0.6.1 的性能内核一个 `runtime: "full"` 全开（预设只是默认值，显式项永远覆盖）：
+
+```js
+const app = JLC.mount(source, "#app", {
+  runtime: "full",               // 调度公平 / 帧预算 / DOM 事务 / 依赖图 / 增量检查点 /
+                                 // 内存分户 / 泄漏探测 / 网络调度 / 故障升级 / 取消内核
+  policy: "open",
+  profile: true,                 // 生产环境改 false（零开销路径）
+  resources: { dom: { soft: 15_000, hard: 20_000 }, workers: 4 },
+});
+
+app.profile().sections;          // Profile 2.0：cpu/dom/scheduler/yield/memory/each/network…
+app.dependencyGraph();           // Effect Dependency Graph（谁依赖谁）
+app.dependents("count");         // 改 count 会牵动哪些 effect
+app.memory();                    // Memory Accountant 分户账
+app.leaks();                     // 泄漏探测报告（POSSIBLE_LEAK）
+app.cancel("net:feed");          // 取消排队任务；组件销毁自动级联取消
+app.context();                   // VM Execution Context：我是谁/在哪/有什么权限/用了多少
 ```
 
 策略层新增两个字段，和旧字段并存：

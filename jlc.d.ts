@@ -239,6 +239,23 @@ export interface JLCAppHandle {
   snapshot(): Readonly<Record<string, unknown>>;
   /** 尚未派发的调度任务。 */
   tasks(): readonly Record<string, unknown>[];
+  // ---- 0.6.1：性能内核操作面 ----
+  /** 取消任务：按 id / label / 谓词。组件销毁会级联取消其名下任务。 */
+  cancel(query: number | string | ((task: Record<string, unknown>) => boolean)): number;
+  /** VM Execution Context：我是谁 / 在哪 / 有什么权限 / 用了多少资源 / 出错怎么恢复。 */
+  context(): Readonly<Record<string, unknown>>;
+  /** Memory Accountant：state / checkpoint / task / cache 分户账（字节）。 */
+  memory(): Readonly<Record<string, unknown>>;
+  /** 泄漏探测报告（未开启时 enabled: false）。 */
+  leaks(): Readonly<Record<string, unknown>>;
+  /** 手动采样一次泄漏探测（测试 / 巡检用）。 */
+  sampleLeaks(): Readonly<Record<string, unknown>>;
+  /** Effect Dependency Graph：信号 / effect / 订阅边（只读）。 */
+  dependencyGraph(): Readonly<Record<string, unknown>>;
+  /** 改某个状态会牵动哪些 effect（含经由派生状态的间接依赖）。 */
+  dependents(name: string): readonly Record<string, unknown>[];
+  /** Scheduler v2.1 车道视图：运行数 / 强制让出 / 饥饿营救 / 帧预算。 */
+  lanes(): Readonly<Record<string, unknown>>;
   unmount(): void;
 }
 
@@ -274,8 +291,8 @@ export interface JLCMountOptions {
   grants?: Record<string, unknown>;
   /** 裸能力名 → 能力路径（宿主自定义能力用；内置别名见 `CAPABILITY_ALIASES`）。 */
   capabilityPaths?: Record<string, string>;
-  /** 资源限额：`RESOURCE_KINDS` 的任意子集。 */
-  resources?: Record<string, number>;
+  /** 资源限额：`RESOURCE_KINDS` 的任意子集；0.6.1 起每种资源可用 `{ soft, hard }` 双限额。 */
+  resources?: Record<string, number | { soft?: number; hard?: number; limit?: number }>;
   /** 检查点数量上限（默认 8）。 */
   checkpointLimit?: number;
   /** 协作式调度：单次任务的指令预算（0 = 关闭，行为与 0.4 一致）。 */
@@ -287,6 +304,44 @@ export interface JLCMountOptions {
   /** 打开逐指令热点统计（默认 false，零开销）。 */
   profile?: boolean;
   debug?: boolean;
+  // ---- 0.6.1 Performance Kernel ----
+  /** 运行档：`"full"` = 全部接管子系统启用（调度公平 / 帧预算 / DOM 事务 / 依赖图 /
+   *  增量检查点 / 内存分户 / 泄漏探测 / 网络调度 / 故障自动升级 / 取消内核）。 */
+  runtime?: "full" | "legacy";
+  /** 首次越过资源 soft 限额时的回调。 */
+  onWarn?: (info: { code: string; resource?: string; kind?: string; used?: number }) => void;
+  /** Scheduler v2.1 参数：连续片数上限 / 老化 / 饥饿阈值 / 按车道配额。 */
+  scheduler?: {
+    maxConsecutiveSlices?: number;
+    agingMs?: number;
+    maxAgingSteps?: number;
+    starvationMs?: number;
+    laneQuotas?: Record<number, number>;
+  };
+  /** 渲染分片大小（配合协作式调度的大列表分帧）。 */
+  renderChunk?: number;
+  /** 切片预算检查粒度（指令数）。 */
+  sliceCheckInterval?: number;
+  /** DOM Transaction Kernel：属性面写操作先进 Mutation Buffer，批内合并，统一提交。 */
+  domTransaction?: boolean;
+  /** Checkpoint 2.0：delta 快照（结构共享），只存相对上一份的变化。 */
+  checkpointDelta?: boolean;
+  /** Memory Accountant：内存分户账（state / checkpoint / task / cache）。 */
+  memoryAccounting?: boolean;
+  /** 内存上限（KB，0 = 不限；超限由资源内核裁决）。 */
+  memoryLimitKB?: number;
+  /** Leak Detector：true = 默认参数；对象可调 intervalMs / threshold。 */
+  leakDetector?: boolean | { intervalMs?: number; threshold?: number };
+  /** 故障自动升级（restart 耗尽 → rollback → degrade）。默认 true。 */
+  faultEscalation?: boolean;
+  /** Network Scheduler：resource 请求经 P5 NETWORK 车道 + 超时 + 重试。 */
+  networkScheduling?: boolean;
+  /** 网络请求超时（毫秒，0 = 不限）。 */
+  networkTimeoutMs?: number;
+  /** 网络请求传输层失败重试次数（默认 0）。 */
+  networkRetries?: number;
+  /** Keyed Node Cache 上限。 */
+  nodeCacheSize?: number;
 }
 
 export interface JLCKernelOptions {
@@ -483,6 +538,8 @@ export interface JLCheckpointEntry {
 
 export interface JLCProfile {
   readonly app: string | null;
+  readonly version?: string;
+  readonly runtime?: string | null;
   readonly active: boolean;
   readonly profiling: boolean;
   readonly instructions: number;
@@ -494,6 +551,9 @@ export interface JLCProfile {
   readonly pending: readonly Record<string, unknown>[];
   readonly suspended: boolean;
   readonly checkpoints: readonly JLCheckpointEntry[];
+  /** 0.6.1 Profile 2.0 分区：cpu / dom / scheduler / yield / memory / effects /
+   *  each / network / resource / faults / hotCache / leaks。 */
+  readonly sections?: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
 }
 
 export interface JLCAnalysis {
@@ -632,3 +692,88 @@ export const DEFAULT_RESOURCE_LIMITS: Readonly<Record<string, number>>;
 export const VERIFIER_PASSES: ReadonlyArray<{ readonly id: number; readonly name: string; readonly label: string }>;
 export const MODULE_FLAGS: Readonly<Record<string, number>>;
 export const ABI_MIN_KERNEL: string;
+
+/* ================================================================
+ * 0.6.1 Performance Kernel 表面
+ * ================================================================ */
+
+/** 运行档预设：`full` = 全部接管子系统启用；显式 mount options 永远覆盖预设。 */
+export const RUNTIME_PRESETS: Readonly<Record<string, Readonly<Record<string, unknown>>>>;
+export function resolveRuntimePreset(name: string | null | undefined): Readonly<Record<string, unknown>>;
+/** 故障自动升级链：本级动作失败 → 下一级接手（不新增第七级）。 */
+export const FAULT_ESCALATION: Readonly<Record<string, JLCFaultLevel>>;
+
+export class FrameBudgetManager {
+  constructor(options?: { frameBudgetMs?: number; laneBudgets?: Record<number, number> });
+  readonly enabled: boolean;
+  begin(now?: number): Readonly<Record<string, unknown>>;
+  deadlineFor(frame: unknown, lane: number): number;
+  stats(): Readonly<Record<string, unknown>>;
+}
+
+export class LaneGovernor {
+  constructor(options?: { quotas?: Record<number, number>; defaultQuota?: number; agingMs?: number; maxAgingSteps?: number; starvationMs?: number });
+  effectivePriority(task: { priority: number; submitted?: number }, now?: number): number;
+  canRun(lane: number, pendingLanes: Set<number>): boolean;
+  starvedLane(pendingLanes: Set<number>, now?: number): number | null;
+  noteRan(lane: number, now?: number): void;
+  stats(): Readonly<Record<string, unknown>>;
+}
+
+export class DomTransaction {
+  constructor(options?: { enabled?: boolean });
+  readonly enabled: boolean;
+  readonly hasPending: boolean;
+  commit(): number;
+  discard(): void;
+  statsView(): Readonly<Record<string, number>>;
+}
+
+export class KeyedNodeCache {
+  constructor(options?: { maxSize?: number });
+  hit(owner: unknown, key: unknown): unknown;
+  miss(owner: unknown, key: unknown): unknown;
+  release(owner: unknown, key: unknown): void;
+  releaseOwner(owner: unknown): void;
+  size(): number;
+  stats(): Readonly<Record<string, number>>;
+}
+
+export class MemoryAccountant {
+  constructor(options?: { limit?: number });
+  charge(account: string, bytes: number): number;
+  release(account: string, bytes: number): number;
+  total(): number;
+  usageKB(): number;
+  usage(): Readonly<Record<string, unknown>>;
+}
+
+export class LeakDetector {
+  constructor(options?: { intervalMs?: number; windowSize?: number; threshold?: number; onWarn?: (info: Record<string, unknown>) => void });
+  sample(snapshot: Record<string, number>, now?: number): Record<string, unknown>;
+  report(): Readonly<Record<string, unknown>>;
+  start(readSnapshot: () => Record<string, number>, host?: unknown): () => void;
+  stop(): void;
+}
+
+export class CancellationRegistry {
+  register(options?: { label?: string; scope?: unknown }): {
+    readonly id: number;
+    canceled: boolean;
+    cancel(reason?: string): boolean;
+    onCancel(callback: (reason: string) => void): void;
+  };
+  cancel(query: number | string | ((token: unknown) => boolean), reason?: string): number;
+  cancelScope(scope: unknown, reason?: string): number;
+  alive(): readonly { readonly id: number; readonly label: string }[];
+  stats(): Readonly<Record<string, number>>;
+}
+
+export class HotPathCache {
+  constructor(module?: { globalRefs?: unknown[]; functions?: unknown[] });
+  statsView(): Readonly<Record<string, number>>;
+}
+
+export function estimateBytes(value: unknown): number;
+export function describeDependencyGraph(runtime: unknown): Readonly<Record<string, unknown>>;
+export function dependentsOf(runtime: unknown, name: string): readonly Record<string, unknown>[];

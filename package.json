@@ -1,7 +1,7 @@
 {
   "name": "@tyu/jlc-kernel",
-  "version": "0.6.0",
-  "description": "JLC 0.6: a dependency-free bytecode VM + compiler with a capability graph, resource kernel, fault ladder and cooperative scheduler",
+  "version": "0.6.1",
+  "description": "JLC 0.6.1 Full Runtime Takeover / Performance Kernel: a dependency-free bytecode VM + compiler with scheduler fairness, frame budgets, DOM transactions, EACH diffing, memory accounting, delta checkpoints and leak detection — on the same jlc-abi/3",
   "type": "module",
   "main": "./jlc.js",
   "module": "./jlc.js",
@@ -27,6 +27,7 @@
     "jlc.js",
     "jlc-vm.js",
     "jlc-compiler.js",
+    "kernel",
     "jlc.d.ts",
     "README.md",
     "SPEC.md",

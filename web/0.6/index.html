@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>JLC 0.6 内核控制台</title>
+    <title>JLC 0.6.1 Runtime Console</title>
     <style>
       :root {
         color-scheme: dark;
@@ -30,7 +30,7 @@
       }
       h1 { margin: 0 0 6px; font-size: 17px; }
       header p { margin: 0; color: var(--dim); font-size: 12.5px; }
-      .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 16px; padding: 16px 22px 40px; }
+      .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 460px); gap: 16px; padding: 16px 22px 40px; }
       @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
       section {
         background: var(--panel);
@@ -61,22 +61,26 @@
       .bad { color: var(--bad); }
       .dim { color: var(--dim); }
       #app-host { min-height: 220px; }
-      #app-host ul { margin: 8px 0 0; padding-left: 18px; color: var(--dim); }
+      #app-host ul { margin: 8px 0 0; padding-left: 18px; color: var(--dim); max-height: 180px; overflow: auto; }
       #app-host strong { color: var(--ok); }
       #app-host button { margin-right: 8px; }
       #log { max-height: 190px; overflow: auto; font-size: 12px; }
       #log div { border-bottom: 1px solid #21262d; padding: 2px 0; }
       .meter { height: 6px; background: #21262d; border-radius: 4px; overflow: hidden; margin-top: 3px; }
       .meter span { display: block; height: 100%; background: var(--key); }
+      .meter span.warn { background: var(--warn); }
       code { color: var(--warn); }
     </style>
   </head>
   <body>
     <header>
-      <h1>JLC 0.6 内核控制台</h1>
+      <h1>JLC 0.6.1 Runtime Console</h1>
       <p>
-        ABI <code>jlc-abi/3</code> · 字节码 v3 · 能力图 / 权限内核 / 资源内核 / 六级故障阶梯 / 协作式调度。
-        下面每个按钮都在调用真实的 0.6 内核 API，右侧面板直接读内核的只读视图。
+        ABI <code>jlc-abi/3</code> · 字节码 v3（0.6.1 不升 ABI：0.4 / 0.5 / 0.6 的 .jbc 全部继续跑）。
+        本页以 <code>runtime: "full"</code> 挂载：Scheduler v2.1 · Frame Budget · DOM Transaction ·
+        EACH Diff 2 · Reactive Batch 2.0 · Profile 2.0 · Memory Accountant · Delta Checkpoint ·
+        Fault Auto-Escalation · Leak Detector · Network Scheduler · Cancellation Kernel。
+        每个按钮都在调用真实的内核 API，右侧面板直接读内核的只读视图。
       </p>
     </header>
 
@@ -88,16 +92,25 @@
         </section>
 
         <section>
-          <h2>宿主接管面</h2>
+          <h2>宿主接管面（0.6）</h2>
           <button data-act="revoke" class="danger">撤销 storage.indexeddb</button>
           <button data-act="grant">重新授予</button>
-          <button data-act="checkpoint">打检查点</button>
+          <button data-act="checkpoint">打检查点（delta）</button>
           <button data-act="rollback">回滚</button>
           <button data-act="bump">count += 1</button>
-          <button data-act="big">追加 2000 行（分片渲染）</button>
-          <button data-act="boom">让组件崩一次（restart）</button>
+          <button data-act="boom">让组件崩一次（restart → 自动升级）</button>
           <button data-act="verify">跑 11 趟验证</button>
           <button data-act="graph">打印 CFG</button>
+        </section>
+
+        <section>
+          <h2>性能内核操作面（0.6.1）</h2>
+          <button data-act="big">EACH Diff：渲染 2000 行（分片 + 帧预算）</button>
+          <button data-act="huge">EACH Diff：10000 行压力</button>
+          <button data-act="patch1">只改 1 行（看 hit / create 不变）</button>
+          <button data-act="cancel" class="danger">取消全部排队任务</button>
+          <button data-act="leak">泄漏采样（sampleLeaks）</button>
+          <button data-act="context">打印 VM Execution Context</button>
         </section>
 
         <section>
@@ -108,14 +121,15 @@
 
       <div>
         <section><h2>能力图 / 权限内核</h2><div id="perms"></div></section>
-        <section><h2>资源内核</h2><div id="res"></div></section>
+        <section><h2>资源内核 2.0（soft / hard）</h2><div id="res"></div></section>
         <section><h2>调度 / 故障 / 检查点</h2><div id="sched"></div></section>
-        <section><h2>热点函数（profile: true）</h2><div id="hot"></div></section>
+        <section><h2>Profile 2.0：CPU / DOM / Yield / EACH</h2><div id="hot"></div></section>
+        <section><h2>内存分户账 / 泄漏探测</h2><div id="mem"></div></section>
       </div>
     </div>
 
     <script type="module">
-      import JLC, { CAPABILITY_PATHS, FAULT_LEVELS } from "../../jlc.js";
+      import JLC, { CAPABILITY_PATHS, FAULT_LEVELS, RUNTIME_PRESETS, VERSION } from "../../jlc.js";
 
       const logNode = document.querySelector("#log");
       const log = (message, kind = "") => {
@@ -133,12 +147,13 @@ app KernelDemo {
   action save() { storagePut("count", count); }
   action bump() { count += 1; save(); }
   action grow(n) { rows = range(1, n); }
+  action patchOne() { rows = replaceAt(rows, 0, len(rows) + 1); }
   view {
     main {
       button(on:click.prevent = { bump(); }) { text "bump + save" }
       strong { text label + " / rows=" + len(rows) }
       when (count > 3) { text mirror(); } else { text "（count ≤ 3）" }
-      ul { each (row in rows key row) { li { text "#" + string(row) } } }
+      ul { each (row in rows) { li { text "#" + string(row) } } }
     }
   }
 }`;
@@ -147,13 +162,35 @@ app KernelDemo {
       let flakyCalls = 0;
 
       const host = document.querySelector("#app-host");
+      /* 0.6.1 推荐默认值（计划 §25）：
+         runtime: "full" 打开全部接管子系统；生产环境把 profile 改为 false
+         即可获得零开销路径（本控制台是开发环境，所以显式 profile: true）。 */
       const app = program.mount(host, {
+        runtime: "full",
+
         policy: "open",
+        isolation: "strict",
+
         fault: "restart",
+
         maxSliceSteps: 20_000,
         frameBudgetMs: 6,
         renderChunk: 64,
+        sliceCheckInterval: 512,
+
+        checkpointLimit: 8,
         profile: true,
+
+        resources: {
+          dom: { soft: 15_000, hard: 20_000 },
+          effects: { soft: 200, hard: 256 },
+          scopes: 4096,
+          tasks: 2048,
+          requests: 64,
+          checkpoints: 8,
+          workers: 4,
+        },
+
         capabilities: {
           storagePut: (key, value) => {
             log(`capability storagePut(${JSON.stringify(key)}, ${JSON.stringify(value)})`);
@@ -169,8 +206,10 @@ app KernelDemo {
         grants: { "storage.indexeddb": { mode: "session" } },
         onError: (error) => log(`onError: ${error.message}`, "bad"),
         onFault: (error, info) => log(`onFault(${info.mode}): ${error.message}`, "warn"),
+        onWarn: (info) => log(`onWarn(${info.code}): ${info.resource ?? info.kind ?? ""} ${info.used ?? ""}`, "warn"),
         state: { count: 0, rows: [] },
       });
+      log(`runtime: "full" 挂载完成（内核 ${VERSION}，预设档位 ${JSON.stringify(Object.keys(RUNTIME_PRESETS))}）`);
 
       /* ---------------- 右侧面板：全部来自内核只读视图 ---------------- */
 
@@ -207,34 +246,63 @@ app KernelDemo {
         res.replaceChildren(renderTable(
           Object.entries(resources).map(([kind, entry]) => [
             kind,
-            `${entry.used}${entry.limit ? ` / ${entry.limit}` : " / ∞"}`,
-            entry.limit ? `<div class="meter"><span style="width:${Math.min(100, Math.round((entry.used / entry.limit) * 100))}%"></span></div>` : `<span class="dim">不限</span>`,
+            `${entry.used}${entry.limit ? ` / ${entry.limit}` : " / ∞"}${entry.soft && entry.soft < entry.limit ? ` <span class="dim">(soft ${entry.soft})</span>` : ""}`,
+            entry.limit
+              ? `<div class="meter"><span class="${entry.state === "warn" ? "warn" : ""}" style="width:${Math.min(100, Math.round((entry.used / entry.limit) * 100))}%"></span></div><span class="${entry.state === "warn" ? "warn" : entry.state === "quota" ? "bad" : "dim"}">${entry.state}${entry.warnings ? ` · ${entry.warnings} 次警告` : ""}</span>`
+              : `<span class="dim">不限</span>`,
           ]),
-          ["资源", "用量", "占比"],
+          ["资源", "用量", "状态"],
         ));
 
         const profile = app.profile();
+        const lanes = app.lanes();
         document.querySelector("#sched").replaceChildren(renderTable(
           [
-            ["fault 档", app.policy().faultLevel, FAULT_LEVELS.join(" → ")],
-            ["任务 / 让出", `${profile.counters.tasks} / ${profile.counters.yields}`, "协作式 VM 切片"],
-            ["渲染分片", profile.counters.renderSlices, "大列表分片渲染（每片让一帧）"],
-            ["重启 / 回滚", `${profile.counters.restarts} / ${profile.counters.rollbacks}`, "组件级重启 / 检查点回滚"],
-            ["故障计数", profile.counters.faults, "policy + fault 记账"],
-            ["挂起中", String(profile.suspended), "有没有未完成的续跑任务"],
-            ["检查点", profile.checkpoints.map((item) => item.label).join(", ") || "（无）", "state + 权限 + 资源"],
+            ["fault 档", app.policy().faultLevel, `${FAULT_LEVELS.join(" → ")}（自动升级：${profile.counters.escalations} 次）`],
+            ["任务 / 让出 / 取消", `${profile.counters.tasks} / ${profile.counters.yields} / ${profile.counters.cancels}`, "协作式 VM 切片 + 取消内核"],
+            ["渲染分片 / 帧", `${profile.counters.renderSlices} / ${lanes.frameBudget?.frames ?? 0}`, "EACH 分片 + VM Frame Budget"],
+            ["强制让出 / 营救", `${Object.values(lanes.governor?.forcedYields ?? {}).reduce((a, b) => a + b, 0)} / ${lanes.governor?.rescues ?? 0}`, "Lane Quota + Starvation Guard"],
+            ["事务 / effect 去重", `${profile.counters.transactions} / ${profile.counters.effectDeduped}`, "Reactive Batch 2.0"],
+            ["重启 / 回滚 / 警告", `${profile.counters.restarts} / ${profile.counters.rollbacks} / ${profile.counters.warnings}`, "故障阶梯 + soft 限额"],
+            ["检查点（delta）", profile.checkpoints.map((item) => `${item.label}${item.delta ? "*" : ""}`).join(", ") || "（无）", "* = delta 快照（结构共享）"],
           ],
           ["项", "值", "说明"],
         ));
 
+        const dom = profile.sections.dom;
+        const each = profile.sections.each;
         const hot = document.querySelector("#hot");
         hot.replaceChildren(renderTable(
-          profile.hot.slice(0, 8).map((entry) => [
-            entry.function,
-            entry.instructions.toLocaleString(),
-            `${(entry.share * 100).toFixed(1)}%`,
-          ]),
-          ["函数", "指令数", "占比"],
+          [
+            ...profile.hot.slice(0, 6).map((entry) => [
+              `CPU ${entry.function}`,
+              entry.instructions.toLocaleString(),
+              `${(entry.share * 100).toFixed(1)}%`,
+            ]),
+            ["DOM create/update/remove", `${dom.create} / ${dom.update} / ${dom.remove}`, `合并 ${dom.coalesced} · 提交 ${dom.commits} · 搬运 ${dom.move}`],
+            ["Yield render/vm", `${profile.sections.yield.renderSlices} / ${profile.sections.yield.vmYields}`, "渲染分片让出 / VM 让出"],
+            ["EACH cache hit/miss", `${each.hits} / ${each.misses}`, `命中率 ${(each.hitRate * 100).toFixed(1)}% · live ${each.size}`],
+            ["Hot Cache global/func", `${profile.sections.hotCache?.globalHits ?? 0} / ${profile.sections.hotCache?.funcHits ?? 0}`, `全局命中率 ${((profile.sections.hotCache?.globalHitRate ?? 0) * 100).toFixed(1)}%`],
+            ["Network live/scheduled", `${profile.sections.network.live} / ${profile.sections.network.scheduled}`, "P5 NETWORK 车道"],
+          ],
+          ["项", "值", "说明"],
+        ));
+
+        const memory = app.memory();
+        const leaks = app.leaks();
+        const mem = document.querySelector("#mem");
+        mem.replaceChildren(renderTable(
+          [
+            ["内存合计", `${memory.totalKB} KB`, memory.limitBytes ? `上限 ${memory.limitBytes} B` : "不设上限"],
+            ...Object.entries(memory.accounts).filter(([, bytes]) => bytes > 0).map(([account, bytes]) => [
+              `├─ ${account}`, `${(bytes / 1024).toFixed(1)} KB`, "",
+            ]),
+            ["检查点净占用", `${(memory.checkpointsBytes / 1024).toFixed(1)} KB`, "delta 结构共享后的真实占用"],
+            ["泄漏探测", leaks.enabled
+              ? (leaks.suspected.length ? `<span class="bad">⚠ ${leaks.suspected.join(", ")} leak suspected</span>` : `<span class="ok">clean</span> · ${leaks.samples.length} 样本`)
+              : "未启用"],
+          ],
+          ["项", "值", "说明"],
         ));
         if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => setTimeout(paint, 80));
         else setTimeout(paint, 80);
@@ -256,10 +324,10 @@ app KernelDemo {
               log("grant storage.indexeddb（session）");
             } else if (action === "checkpoint") {
               const entry = app.checkpoint("manual");
-              log(`checkpoint ${entry.label} @${new Date(entry.at).toLocaleTimeString()}`);
+              log(`checkpoint ${entry.label}${entry.delta ? "（delta：只存变化部分）" : ""} @${new Date(entry.at).toLocaleTimeString()}`);
             } else if (action === "rollback") {
               const entry = app.rollback();
-              log(entry ? `rollback → ${entry.label}` : "没有可回滚的检查点");
+              log(entry ? `rollback → ${entry.label}${entry.delta ? "（沿 delta 链物化）" : ""}` : "没有可回滚的检查点");
             } else if (action === "bump") {
               await app.call("bump");
               app.flush();
@@ -274,10 +342,32 @@ app KernelDemo {
               await app.call("grow", 2000);
               app.flush();
               log(`handle.call('grow', 2000) → 分片渲染让出 ${app.profile().counters.renderSlices} 次`);
+            } else if (action === "huge") {
+              const startedAt = Date.now();
+              await app.call("grow", 10_000);
+              app.flush();
+              const each = app.profile().sections.each;
+              log(`grow(10000) 完成：${Date.now() - startedAt}ms · cache ${each.hits} 命中 / ${each.misses} 新建`);
+            } else if (action === "patch1") {
+              const before = app.profile().sections.dom.create;
+              await app.call("patchOne");
+              app.flush();
+              const each = app.profile().sections.each;
+              const after = app.profile().sections.dom.create;
+              log(`改 1 行 → 新增节点 ${after - before} · 本轮命中复用 ${each.hits}（Diff Engine 2 + Keyed Node Cache）`);
+            } else if (action === "cancel") {
+              const canceled = app.cancel(() => true);
+              log(`cancel(() => true) → 取消 ${canceled} 个排队任务（组件级销毁同样会级联取消）`, canceled ? "warn" : "dim");
+            } else if (action === "leak") {
+              const leaks = app.sampleLeaks();
+              log(`leak sample #${leaks.samples.length}：${leaks.suspected.length ? `⚠ 可疑 ${leaks.suspected.join(", ")}` : "clean"}`, leaks.suspected.length ? "warn" : "");
+            } else if (action === "context") {
+              const context = app.context();
+              log(`VMContext：app=${context.module.app} · abi=${context.module.abi} · state=[${context.state.slice(0, 6).join(",")}] · fault=${context.fault.mode}${context.fault.escalation ? "（自动升级）" : ""} · dom 事务提交=${context.domTransaction?.commits ?? 0}`);
             } else if (action === "boom") {
               flakyCalls = 0;
               app.set("count", 4);
-              log("count=4 → when 分支会调用 mirror()，第一次必然抛错（fault: restart）", "warn");
+              log("count=4 → when 分支会调用 mirror()，第一次必然抛错（fault: restart，重启耗尽自动升级到 rollback）", "warn");
             } else if (action === "verify") {
               const report = JLC.verify(program);
               log(`verify ok=${report.ok} passes=${report.passes.length} warnings=${report.warnings.length} deterministic=${report.analysis.determinism.deterministic}`);
