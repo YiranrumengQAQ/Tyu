@@ -1,0 +1,129 @@
+/** @jlc-page
+ * title: 设置
+ * summary: 主题 / PWA 安装 / 本机数据管理 / 版本信息——宿主层的全部开关都在这
+ * policy: trusted
+ * isolation: soft
+ * fault: degrade
+ * capabilities: browser, pwa, theme
+ * demo: 主题写双份（localStorage 首屏读 + IndexedDB 可清）；数据页列出每个应用的 IndexedDB 占用
+ */
+app Settings {
+  resource browser = http("jlc://meta/browser");
+  resource version = http("jlc://meta/version");
+  resource storeInfo = http("jlc://meta/storage");
+
+  derive themeMode = browser.data == null ? "auto" : get(browser.data, "theme", "auto");
+  derive platformLine = browser.data == null ? "…" : browser.data.platform + (browser.data.mobile ? "（移动端）" : "");
+  derive pwaLine = pwaStatus();
+  derive storeItems = storeInfo.data == null ? [] : storeInfo.data.items;
+
+  action setTheme(mode) {
+    theme(mode);
+    reload(browser);
+    return null;
+  }
+
+  action installApp() {
+    pwaInstall();
+    return null;
+  }
+
+  action clearApp(app) {
+    clearAppStorage(app);
+    reload(storeInfo);
+    return null;
+  }
+
+  action clearAll() {
+    clearAllData();
+    return null;
+  }
+
+  style `
+    .set { display: grid; gap: 14px; }
+    .set h1 { margin: 0; font: 800 22px/1.3 var(--display); }
+    .set-card {
+      background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px;
+      padding: 14px; display: grid; gap: 10px;
+    }
+    .set-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .set-kv { display: grid; grid-template-columns: 110px 1fr; gap: 8px; font-size: 12.5px; align-items: baseline; }
+    .set-kv dt { color: var(--muted); font: 600 11px var(--mono); text-transform: uppercase; letter-spacing: .05em; }
+    .set-kv dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; }
+    .set-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .set-table th, .set-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--md-divider); }
+    .set-table thead th { font: 600 10.5px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .theme-btn.is-on { border-color: var(--md-sys-color-primary); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+  `;
+
+  view {
+    main(class = "set") {
+      h1 { text "设置"; }
+
+      div(class = "set-card") {
+        strong { text "外观"; }
+        div(class = "set-row") {
+          button(class = "os-btn os-btn--small theme-btn" + (themeMode == "auto" ? " is-on" : ""), on:click = { setTheme("auto"); }) { text "🌗 跟随系统"; }
+          button(class = "os-btn os-btn--small theme-btn" + (themeMode == "light" ? " is-on" : ""), on:click = { setTheme("light"); }) { text "☀️ 浅色"; }
+          button(class = "os-btn os-btn--small theme-btn" + (themeMode == "dark" ? " is-on" : ""), on:click = { setTheme("dark"); }) { text "🌙 深色"; }
+        }
+        p(class = "muted") { text "主题首屏无闪烁：index.html 内联脚本在样式表之前落 data-theme。"; }
+      }
+
+      div(class = "set-card") {
+        strong { text "PWA / 离线"; }
+        div(class = "set-row") {
+          span(class = "muted") { text pwaLine; }
+          button(class = "os-btn os-btn--small os-btn--filled", on:click = { installApp(); }) { text "📲 安装到主屏幕"; }
+        }
+        p(class = "muted") {
+          text "Service Worker 在仓库根：首次联网后整站（含 0.4）可离线；GitHub Pages 只负责第一次分发。";
+        }
+      }
+
+      div(class = "set-card") {
+        strong { text "本机数据（IndexedDB）"; }
+        when (len(storeItems) == 0) {
+          p(class = "muted") { text "还没有任何应用写过数据。"; }
+        }
+        when (len(storeItems) > 0) {
+          table(class = "set-table") {
+            thead { tr { th { text "应用"; } th { text "键数"; } th { text "体积"; } th { text "" } } }
+            tbody {
+              each (item in storeItems key item.app) {
+                tr {
+                  td { text item.app; }
+                  td { text len(item.keys); }
+                  td { text item.bytes + " B"; }
+                  td {
+                    button(class = "os-btn os-btn--small", on:click = { clearApp(item.app); }) { text "清空"; }
+                  }
+                }
+              }
+            }
+          }
+        }
+        button(class = "os-btn os-btn--small", on:click = { clearAll(); }) { text "⚠ 清除全部本机数据（含权限，页面将刷新）"; }
+      }
+
+      div(class = "set-card") {
+        strong { text "关于"; }
+        dl(class = "set-kv") {
+          dt { text "内核"; }
+          dd { text version.data == null ? "…" : version.data.kernel; }
+          dt { text "宿主"; }
+          dd { text version.data == null ? "…" : version.data.host + "（Browser Host）"; }
+          dt { text "平台"; }
+          dd { text platformLine; }
+        }
+        p(class = "muted") {
+          text "JLC 0.4 内核一字未动：jlc-vm.js / jlc-compiler.js / jlc.js / SPEC.md / JBC.md 全部冻结。0.5 只是外面这层宿主。";
+        }
+        div(class = "set-row") {
+          a(href = "../") { text "回到 JLC OS 0.4 →"; }
+          a(href = "https://github.com/YiranrumengQAQ/Tyu") { text "GitHub 仓库 ↗"; }
+        }
+      }
+    }
+  }
+}

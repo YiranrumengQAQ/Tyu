@@ -1142,7 +1142,7 @@ app LandscapePro {
           }
 
           button(class = "fab", on:click = { refreshGallery(); }, attr:title = "刷新画廊") {
-            text "+";
+            text "＋"; // 全角号：0.4 解析器把裸 "+" 字符串当一元运算符（见 web/0.5/README 已知问题）
           }
 
           /* 模态框 */

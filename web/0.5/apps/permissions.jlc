@@ -1,0 +1,148 @@
+/** @jlc-page
+ * title: 权限
+ * summary: 权限中心：每个应用 × 能力域的授予档位（始终 / 会话 / 一次 / 拒绝），运行期请求在这里处理
+ * policy: trusted
+ * isolation: soft
+ * fault: degrade
+ * capabilities:
+ * demo: 档位改完立即生效——capability 每次调用都同步查这张表；「一次」档放行一次自动回收
+ */
+app PermissionCenter {
+  resource table = http("jlc://meta/permissions");
+
+  derive rows = table.data == null ? [] : table.data.apps;
+  derive pending = table.data == null ? [] : table.data.requested;
+
+  action modeLabel(mode) {
+    if (mode == "always") { return "始终"; }
+    if (mode == "session") { return "会话"; }
+    if (mode == "once") { return "一次"; }
+    if (mode == "deny") { return "拒绝"; }
+    return "未授权";
+  }
+
+  action grant(app, domain, mode) {
+    setPermission(app, domain, mode);
+    reload(table);
+    return null;
+  }
+
+  action resetApp(app) {
+    resetPermissions(app);
+    reload(table);
+    return null;
+  }
+
+  action resetAll() {
+    resetAllPermissions();
+    reload(table);
+    return null;
+  }
+
+  style `
+    .perm { display: grid; gap: 14px; }
+    .perm h1 { margin: 0; font: 800 22px/1.3 var(--display); }
+    .perm-card {
+      background: var(--surface); border: 1.5px solid var(--border); border-radius: 14px;
+      padding: 14px; display: grid; gap: 10px;
+    }
+    .perm-app-head { display: flex; align-items: center; gap: 10px; }
+    .perm-app-ico { font-size: 18px; }
+    .perm-app-name { font: 700 14px/1.3 var(--display); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+    .perm-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    .perm-table th, .perm-table td { text-align: left; padding: 7px 9px; border-bottom: 1px solid var(--md-divider); vertical-align: middle; }
+    .perm-table thead th { font: 600 10.5px var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .perm-domain { font: 600 12px var(--mono); white-space: nowrap; }
+    .perm-mode {
+      display: inline-block; font: 600 10.5px/1 var(--mono);
+      padding: 3.5px 8px; border-radius: 6px; white-space: nowrap;
+      background: var(--acc-4); color: var(--muted); border: 1px solid var(--md-divider);
+    }
+    .perm-mode-always { background: var(--md-sys-color-success-container); color: var(--md-sys-color-on-success-container); border-color: transparent; }
+    .perm-mode-session { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); border-color: transparent; }
+    .perm-mode-once { background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container); border-color: transparent; }
+    .perm-mode-deny { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); border-color: transparent; }
+    .perm-actions { display: flex; gap: 5px; flex-wrap: wrap; }
+    .perm-pending {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 10px 12px; border-radius: 10px;
+      background: var(--md-sys-color-warning-container); color: var(--md-sys-color-on-warning-container);
+      font-size: 12.5px;
+    }
+  `;
+
+  view {
+    main(class = "perm") {
+      div {
+        h1 { text "权限中心"; }
+        p(class = "muted") {
+          text "always / deny 持久化在本机 IndexedDB；session / once 只活在这一次会话。运行期被拦的调用会出现在下面的请求列表。";
+        }
+      }
+
+      when (table.loading) {
+        p(class = "muted") { text "正在读取权限表…"; }
+      }
+      when (table.error != null) {
+        p(class = "muted") { text "权限表加载失败：" + table.error.message; }
+      }
+
+      when (len(pending) > 0) {
+        div(class = "perm-pending") {
+          strong { text "运行期请求："; }
+          each (req in pending) {
+            span { text req.app + " → " + req.domain; }
+          }
+          button(class = "os-btn os-btn--small", on:click = { reload(table); }) { text "刷新"; }
+        }
+      }
+
+      each (row in rows key row.name) {
+        div(class = "perm-card") {
+          div(class = "perm-app-head") {
+            span(class = "perm-app-ico") { text row.icon; }
+            span(class = "perm-app-name") { text row.title; }
+            span(class = "badge") { text row.policy; }
+            button(class = "os-btn os-btn--small", on:click = { resetApp(row.name); }) { text "重置该应用"; }
+          }
+          when (len(row.capabilities) == 0) {
+            p(class = "muted") { text "没有声明宿主能力（纯内核应用）。"; }
+          }
+          when (len(row.capabilities) > 0) {
+            table(class = "perm-table") {
+              thead { tr { th { text "能力"; } th { text "当前档位"; } th { text "操作"; } } }
+              tbody {
+                each (cap in row.capabilities) {
+                  tr {
+                    td(class = "perm-domain") { text cap; }
+                    td {
+                      span(class = "perm-mode" + (get(row.grants, cap, "none") == "always" ? " perm-mode-always" :
+                              (get(row.grants, cap, "none") == "session" ? " perm-mode-session" :
+                              (get(row.grants, cap, "none") == "once" ? " perm-mode-once" :
+                              (get(row.grants, cap, "none") == "deny" ? " perm-mode-deny" : ""))))) {
+                        text modeLabel(get(row.grants, cap, "none"));
+                      }
+                    }
+                    td {
+                      div(class = "perm-actions") {
+                        button(class = "os-btn os-btn--small", on:click = { grant(row.name, cap, "once"); }) { text "一次"; }
+                        button(class = "os-btn os-btn--small", on:click = { grant(row.name, cap, "session"); }) { text "会话"; }
+                        button(class = "os-btn os-btn--small", on:click = { grant(row.name, cap, "always"); }) { text "始终"; }
+                        button(class = "os-btn os-btn--small", on:click = { grant(row.name, cap, "deny"); }) { text "拒绝"; }
+                        button(class = "os-btn os-btn--small", on:click = { grant(row.name, cap, "none"); }) { text "清除"; }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      div {
+        button(class = "os-btn os-btn--small", on:click = { resetAll(); }) { text "⚠ 清除全部数据与权限（含应用本地数据库）"; }
+      }
+    }
+  }
+}
