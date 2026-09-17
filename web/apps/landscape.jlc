@@ -17,7 +17,7 @@ app LandscapePro {
   state images = range(1, 13);
   state viewMode = "gallery"; // "gallery" | "app"
 
-  /* 彩蛋状态 */
+  /* 彩蛋交互 */
   state yearClicks = 0;
   state stoneClicks = 0;
   state stoneVisible = false;
@@ -31,7 +31,7 @@ app LandscapePro {
   state useLube = false;
   state showMotivation = true;
 
-  /* 计算与会话 */
+  /* 计算结果与会话 */
   state hasCalculated = false;
   state actionDelay = 0;
   state safetyScore = 100;
@@ -45,12 +45,14 @@ app LandscapePro {
   state remainingSeconds = 0;
   state showCelebration = false;
 
+  /* 设置历史与活动日志 */
+  state settingsHistory = [];
   state logs = [
-    { type: "info", icon: "[i]", text: "系统就绪 — 纯前端 JLC 内核运行中" }
+    { type: "info", icon: "[i]", text: "系统就绪 — 您的设置将自动保存" }
   ];
 
   /* ============================================================
-   * 派生状态 (Derive)
+   * 派生状态 (Derives)
    * ============================================================ */
 
   derive isDark = theme == "dark";
@@ -63,8 +65,8 @@ app LandscapePro {
 
   derive safetyLevel = safetyScore >= 80 ? "high" : (safetyScore >= 50 ? "medium" : "low");
   derive safetyColor = safetyScore >= 80 ? "var(--md-sys-color-success)" : (safetyScore >= 50 ? "var(--md-sys-color-warning)" : "var(--md-sys-color-error)");
-  derive safetyIcon = safetyScore >= 80 ? "✅" : (safetyScore >= 50 ? "⚠️" : "🚨");
-  derive safetyDesc = safetyScore >= 80 ? "安全级别: 良好 · 当前配置舒适安全。" : (safetyScore >= 50 ? "安全级别: 中等 · 建议增加润滑并保持缓慢。" : "安全级别: 警告 · 强烈建议充分润滑并放慢速度。");
+  derive safetyTitle = safetyScore >= 80 ? "安全级别: 良好" : (safetyScore >= 50 ? "安全级别: 中等" : "安全级别: 警告");
+  derive safetyDesc = safetyScore >= 80 ? "当前配置看起来很安全。" : (safetyScore >= 50 ? "建议使用润滑液并缓慢进行。" : "强烈建议使用润滑液。请务必极慢地进行。");
 
   /* ============================================================
    * 业务动作 (Actions)
@@ -76,10 +78,9 @@ app LandscapePro {
 
   action refreshGallery() {
     seed = seed + 1;
-    addLog("画廊已刷新", "info");
   }
 
-  /* 彩蛋逻辑 */
+  /* 彩蛋控制 */
   action clickYear() {
     yearClicks = yearClicks + 1;
     if (yearClicks >= 10) {
@@ -99,8 +100,8 @@ app LandscapePro {
       stoneClicks = 0;
       stoneVisible = false;
       viewMode = "app";
-      title("愉悦分析 Pro · JLC 全权内核");
-      addLog("已通过彩蛋解锁进入「愉悦分析 Pro」", "success");
+      title("愉悦分析 Pro · 风景集");
+      addLog("系统就绪 — 您的设置已载入", "info");
     }
   }
 
@@ -110,9 +111,10 @@ app LandscapePro {
     stoneVisible = false;
     yearClicks = 0;
     stoneClicks = 0;
-    title("风景集 · JLC 0.4.0");
+    title("风景集 · 愉悦分析 Pro");
   }
 
+  /* 参数设置 */
   action toggleLube() {
     useLube = !useLube;
   }
@@ -144,21 +146,26 @@ app LandscapePro {
     if (type == "insert") { icon = "[IN]"; }
     else if (type == "withdraw") { icon = "[OUT]"; }
     else if (type == "success") { icon = "[OK]"; }
-    else if (type == "warn") { icon = "[!]"; }
+    else if (type == "motivation") { icon = "[...]"; }
 
     let entry = { type: type, icon: icon, text: msg };
     let next = append(logs, entry);
-    if (len(next) > 40) {
-      next = slice(next, len(next) - 40, len(next));
+    if (len(next) > 50) {
+      next = slice(next, len(next) - 50, len(next));
     }
     logs = next;
   }
 
+  /* 核心参数计算 */
   action calculate() {
     let mult = expMultiplier;
     let base = ((number(toyLength) / 30) + (number(toyDiameter) / 3) + 1.2) * mult;
     originalDelay = base;
     actionDelay = max(0.2, useLube ? base * 0.70 : base);
+
+    if (useLube) {
+      addLog("[润滑] 速度已提升约 30%", "success");
+    }
 
     let safety = 100;
     if (number(toyLength) > 100) { safety = safety - 20; }
@@ -175,12 +182,52 @@ app LandscapePro {
     hasCalculated = true;
     remainingSeconds = round(number(totalCount) * actionDelay);
 
-    addLog("计算完成: 频率 " + string(round(actionDelay * 100) / 100) + " 秒/次 · 安全分 " + string(safetyScore), "success");
+    /* 历史记录存档 */
+    let histItem = {
+      id: now(),
+      len: toyLength,
+      dia: toyDiameter,
+      count: totalCount,
+      exp: expLabel,
+      lube: useLube
+    };
+    let nextHist = prepend(settingsHistory, histItem);
+    if (len(nextHist) > 8) {
+      nextHist = slice(nextHist, 0, 8);
+    }
+    settingsHistory = nextHist;
+
+    addLog("[成功] 计算完毕 -- 频率: " + string(round(actionDelay * 100) / 100) + "秒/次", "success");
   }
 
+  action restoreHist(item) {
+    toyLength = item.len;
+    toyDiameter = item.dia;
+    totalCount = item.count;
+    useLube = item.lube;
+    addLog("[已恢复] 设置已成功恢复", "success");
+  }
+
+  action deleteHist(id) {
+    let next = [];
+    for (h in settingsHistory) {
+      if (h.id != id) {
+        next = append(next, h);
+      }
+    }
+    settingsHistory = next;
+    addLog("[已删除] 记录已移除", "info");
+  }
+
+  action clearHist() {
+    settingsHistory = [];
+    addLog("[已清空] 所有历史记录已清空", "info");
+  }
+
+  /* 会话循环控制 */
   action startSession() {
     if (!hasCalculated) {
-      addLog("请先点击计算分析", "warn");
+      addLog("[错误] 请先点击计算按钮", "info");
       return;
     }
     isRunning = true;
@@ -191,8 +238,19 @@ app LandscapePro {
     showCelebration = false;
     remainingSeconds = round(number(totalCount) * actionDelay);
 
-    addLog("进程已正式启动", "success");
+    addLog("[开始] 进程已启动", "success");
     runCycle();
+    trackTime();
+  }
+
+  action trackTime() {
+    if (!isRunning) { return; }
+    after (1000) {
+      if (isRunning && !isPaused) {
+        timerSeconds = timerSeconds + 1;
+      }
+      trackTime();
+    }
   }
 
   action runCycle() {
@@ -209,6 +267,9 @@ app LandscapePro {
       insertions = insertions + 1;
       let lubeHint = useLube ? " [润滑加成]" : "";
       addLog("进入 >>> 第 " + string(insertions) + " 次" + lubeHint, "insert");
+      if (showMotivation && insertions % 3 == 0) {
+        addLog("很棒的节奏。继续保持这个舒适的速度。", "motivation");
+      }
     } else {
       addLog("拔出 <<< 完全拔出", "withdraw");
     }
@@ -222,9 +283,9 @@ app LandscapePro {
   action togglePause() {
     isPaused = !isPaused;
     if (isPaused) {
-      addLog("进程已暂停", "warn");
+      addLog("[暂停] 进程已暂停", "info");
     } else {
-      addLog("进程继续恢复", "info");
+      addLog("[恢复] 进程继续...", "info");
       runCycle();
     }
   }
@@ -232,14 +293,15 @@ app LandscapePro {
   action stopSession() {
     isRunning = false;
     isPaused = false;
-    addLog("进程已强制结束", "warn");
+    addLog("[停止] 进程已强制结束", "info");
   }
 
   action completeSession() {
     isRunning = false;
     showCelebration = true;
-    addLog("进程圆满完成！已达成 " + string(insertions) + " 次循环", "success");
-    after (2500) {
+    addLog("[完成] 进程已顺利结束！", "success");
+    addLog("[统计] 共进入 " + string(insertions) + " 次，耗时 " + timerFormatted, "success");
+    after (1500) {
       showCelebration = false;
     }
   }
@@ -254,7 +316,7 @@ app LandscapePro {
   }
 
   /* ============================================================
-   * 样式系统 (Material 3)
+   * 样式系统 (100% 还原原版视觉)
    * ============================================================ */
 
   style `
@@ -262,68 +324,95 @@ app LandscapePro {
     html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      min-height: 100dvh;
-      background: var(--md-bg);
-      color: var(--md-text);
+      min-height: 100vh;
+      background: var(--md-sys-color-background);
+      color: var(--md-sys-color-on-background);
       line-height: 1.5;
       transition: background 0.35s ease, color 0.35s ease;
       overflow-x: hidden;
-    }
-
-    .app {
-      max-width: 1400px;
-      margin: 0 auto;
-      padding: 0 20px 80px;
+      padding-bottom: 96px;
     }
 
     .app.dark {
-      --md-bg: #141218;
-      --md-surface: #1E1B24;
-      --md-surface-var: #2B2933;
-      --md-primary: #D0BCFF;
-      --md-on-primary: #381E72;
-      --md-primary-container: #4F378B;
-      --md-on-primary-container: #EADDFF;
-      --md-text: #E6E0E9;
-      --md-muted: #938F99;
-      --md-outline: #49454F;
-      --md-border: rgba(255,255,255,0.08);
+      --md-sys-color-primary: #D0BCFF;
+      --md-sys-color-on-primary: #381E72;
+      --md-sys-color-primary-container: #4F378B;
+      --md-sys-color-on-primary-container: #EADDFF;
+      --md-sys-color-background: #141218;
+      --md-sys-color-on-background: #E6E0E9;
+      --md-sys-color-surface: #1E1B24;
+      --md-sys-color-on-surface: #E6E0E9;
+      --md-sys-color-surface-variant: #2B2933;
+      --md-sys-color-on-surface-variant: #938F99;
+      --md-sys-color-outline: #49454F;
+      --md-sys-color-outline-variant: #49454F;
       --md-sys-color-success: #75D88B;
+      --md-sys-color-success-container: #0D4F28;
+      --md-sys-color-on-success-container: #A7F0BA;
       --md-sys-color-warning: #F5C542;
+      --md-sys-color-warning-container: #6B5200;
+      --md-sys-color-on-warning-container: #FFE082;
       --md-sys-color-error: #F2B8B5;
+      --md-sys-color-error-container: #8C1D18;
+      --md-sys-color-on-error-container: #FFDAD6;
+      --md-card-bg: #1E1B24;
+      --md-card-border: rgba(255, 255, 255, 0.06);
+      --md-input-bg: #2B2933;
+      --md-input-text: #E6E0E9;
+      --md-divider: rgba(255, 255, 255, 0.08);
+      --md-shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
+      --md-shadow-lg: 0 12px 28px rgba(0,0,0,0.4);
     }
 
     .app.light {
-      --md-bg: #FFFBFE;
-      --md-surface: #FFFFFF;
-      --md-surface-var: #F5F0FA;
-      --md-primary: #6750A4;
-      --md-on-primary: #FFFFFF;
-      --md-primary-container: #EADDFF;
-      --md-on-primary-container: #21005D;
-      --md-text: #1D1B20;
-      --md-muted: #79747E;
-      --md-outline: #CAC4D0;
-      --md-border: rgba(0,0,0,0.06);
+      --md-sys-color-primary: #6750A4;
+      --md-sys-color-on-primary: #FFFFFF;
+      --md-sys-color-primary-container: #EADDFF;
+      --md-sys-color-on-primary-container: #21005D;
+      --md-sys-color-background: #FFFBFE;
+      --md-sys-color-on-background: #1D1B20;
+      --md-sys-color-surface: #FFFFFF;
+      --md-sys-color-on-surface: #1D1B20;
+      --md-sys-color-surface-variant: #F5F0FA;
+      --md-sys-color-on-surface-variant: #79747E;
+      --md-sys-color-outline: #79747E;
+      --md-sys-color-outline-variant: #CAC4D0;
       --md-sys-color-success: #1E7B3A;
+      --md-sys-color-success-container: #A7F0BA;
+      --md-sys-color-on-success-container: #002109;
       --md-sys-color-warning: #9C6D00;
+      --md-sys-color-warning-container: #FFE082;
+      --md-sys-color-on-warning-container: #312000;
       --md-sys-color-error: #BA1A1A;
+      --md-sys-color-error-container: #FFDAD6;
+      --md-sys-color-on-error-container: #410002;
+      --md-card-bg: #FFFFFF;
+      --md-card-border: rgba(0,0,0,0.06);
+      --md-input-bg: #F5F5F5;
+      --md-input-text: #1D1B20;
+      --md-divider: #E7E0EC;
+      --md-shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
+      --md-shadow-lg: 0 12px 28px rgba(0,0,0,0.1);
     }
 
-    /* ---- 顶栏 ---- */
+    .container {
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
     .appbar {
       display: flex;
       align-items: center;
       justify-content: space-between;
       padding: 24px 0 16px;
-      min-height: 64px;
     }
     .brand {
-      font-size: 1.4rem;
+      font-size: 1.375rem;
       font-weight: 800;
       letter-spacing: -0.02em;
     }
-    .brand .accent { color: var(--md-primary); }
+    .brand .accent { color: var(--md-sys-color-primary); }
 
     .icon-btn {
       width: 44px;
@@ -331,44 +420,47 @@ app LandscapePro {
       border-radius: 50%;
       border: none;
       background: transparent;
-      color: var(--md-text);
+      color: var(--md-sys-color-on-surface);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.2rem;
-      transition: background 0.2s, transform 0.2s;
+      font-size: 1.1rem;
+      font-weight: 700;
+      transition: background 0.2s, transform 0.3s;
     }
-    .icon-btn:hover { background: var(--md-surface-var); transform: scale(1.05); }
+    .icon-btn:hover {
+      background: var(--md-sys-color-surface-variant);
+      transform: rotate(20deg);
+    }
 
     .subtitle {
-      color: var(--md-muted);
-      font-size: 0.92rem;
-      margin-bottom: 24px;
+      color: var(--md-sys-color-on-surface-variant);
+      font-size: 0.9rem;
+      margin-bottom: 28px;
     }
 
-    /* ---- 画廊卡片 ---- */
     .gallery {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
-      gap: 22px;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 20px;
     }
     .card {
-      background: var(--md-surface);
+      background: var(--md-card-bg);
       border-radius: 20px;
       overflow: hidden;
-      border: 1px solid var(--md-border);
-      box-shadow: 0 4px 12px rgba(0,0,0,0.04);
-      transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.3s;
+      border: 1px solid var(--md-card-border);
+      box-shadow: var(--md-shadow-sm);
+      transition: transform 0.45s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.3s;
     }
     .card:hover {
-      transform: translateY(-6px);
-      box-shadow: 0 12px 28px rgba(0,0,0,0.12);
+      transform: translateY(-8px);
+      box-shadow: var(--md-shadow-lg);
     }
     .card-img-wrap {
       width: 100%;
-      height: 230px;
-      background: var(--md-surface-var);
+      height: 240px;
+      background: var(--md-sys-color-surface-variant);
       overflow: hidden;
     }
     .card-img {
@@ -376,51 +468,50 @@ app LandscapePro {
       height: 100%;
       object-fit: cover;
       display: block;
-      transition: transform 0.4s ease;
+      transition: transform 0.5s ease;
     }
-    .card:hover .card-img { transform: scale(1.04); }
+    .card:hover .card-img { transform: scale(1.05); }
     .card-info { padding: 16px 18px; }
-    .card-title { font-weight: 600; font-size: 0.95rem; }
-    .card-meta { font-size: 0.8rem; color: var(--md-muted); margin-top: 4px; }
+    .card-title { font-weight: 600; font-size: 0.95rem; color: var(--md-sys-color-on-surface); }
+    .card-meta { font-size: 0.8rem; color: var(--md-sys-color-on-surface-variant); margin-top: 4px; }
 
-    /* ---- 底部与 FAB ---- */
     .footer {
       text-align: center;
-      margin-top: 60px;
+      margin-top: 56px;
       padding: 24px 0;
-      color: var(--md-muted);
+      color: var(--md-sys-color-on-surface-variant);
       font-size: 0.85rem;
-      border-top: 1px solid var(--md-border);
+      border-top: 1px solid var(--md-divider);
+      line-height: 1.7;
     }
     .year-trigger { cursor: pointer; transition: color 0.2s; }
-    .year-trigger:hover { color: var(--md-primary); }
+    .year-trigger:hover { color: var(--md-sys-color-primary); }
 
     .fab {
       position: fixed;
-      bottom: 26px;
-      right: 26px;
+      bottom: 24px;
+      right: 24px;
       width: 56px;
       height: 56px;
       border-radius: 18px;
       border: none;
-      background: var(--md-primary);
-      color: var(--md-on-primary);
+      background: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-primary);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.3rem;
-      box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+      font-size: 1.4rem;
+      box-shadow: var(--md-shadow-lg);
+      transition: transform 0.4s cubic-bezier(0.34,1.56,0.64,1);
       z-index: 50;
-      transition: transform 0.3s, box-shadow 0.3s;
     }
     .fab:hover { transform: scale(1.08) rotate(90deg); }
 
-    /* ---- 石头彩蛋 ---- */
     .stone {
       position: fixed;
       bottom: 96px;
-      right: 28px;
+      right: 24px;
       width: 44px;
       height: 38px;
       cursor: pointer;
@@ -428,10 +519,11 @@ app LandscapePro {
       background: linear-gradient(145deg, #b0b0b8 0%, #8e8e93 30%, #636366 100%);
       border-radius: 54% 46% 58% 42% / 44% 56% 40% 60%;
       box-shadow: 0 8px 20px rgba(0,0,0,0.3);
-      animation: stoneDrop 0.9s cubic-bezier(0.34, 1.56, 0.64, 1);
+      animation: stoneDrop 1s cubic-bezier(0.34,1.56,0.64,1);
     }
+    .stone:hover { transform: scale(1.12) rotate(8deg); }
     @keyframes stoneDrop {
-      0% { transform: translateY(-300px); opacity: 0; }
+      0% { transform: translateY(-500px); opacity: 0; }
       100% { transform: translateY(0); opacity: 1; }
     }
 
@@ -445,193 +537,323 @@ app LandscapePro {
       z-index: 99;
     }
     .modal-stone {
-      width: 100px;
-      height: 80px;
-      background: linear-gradient(145deg, #b0b0b8, #636366);
-      border-radius: 50%;
-      box-shadow: 0 20px 50px rgba(0,0,0,0.5);
-      animation: stoneDrop 0.8s ease;
+      width: 110px;
+      height: 90px;
+      background: linear-gradient(145deg, #b0b0b8 0%, #8e8e93 30%, #636366 100%);
+      border-radius: 52% 48% 56% 44% / 46% 54% 42% 58%;
+      box-shadow: 0 28px 60px rgba(0,0,0,0.35);
+      animation: stoneDrop 1s cubic-bezier(0.34,1.56,0.64,1);
     }
 
-    /* ---- Pro 模式视图 ---- */
+    /* ---- Pro 面板 ---- */
     .pro-wrap {
-      max-width: 960px;
+      max-width: 900px;
       margin: 0 auto;
-      padding-top: 16px;
+      padding: 20px;
     }
     .exit-btn {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 9px 20px;
+      padding: 8px 18px;
       border-radius: 9999px;
-      background: var(--md-surface);
-      border: 1px solid var(--md-border);
-      color: var(--md-text);
+      background: var(--md-card-bg);
+      border: 1px solid var(--md-divider);
+      color: var(--md-sys-color-on-surface);
+      font-weight: 500;
+      font-size: 0.85rem;
       cursor: pointer;
-      font-weight: 600;
-      font-size: 0.86rem;
       margin-bottom: 20px;
-      box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+      box-shadow: var(--md-shadow-sm);
     }
+    .exit-btn:hover { transform: translateY(-2px); }
+
     .pro-header {
       text-align: center;
-      padding: 28px 20px;
-      background: var(--md-surface);
-      border-radius: 24px;
-      border: 1px solid var(--md-border);
+      padding: 24px;
+      background: var(--md-card-bg);
+      border-radius: 20px;
+      border: 1px solid var(--md-card-border);
       margin-bottom: 20px;
     }
-    .pro-title { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.02em; }
-    .pro-sub { font-size: 0.85rem; color: var(--md-muted); margin-top: 6px; }
+    .pro-title { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.03em; }
+    .pro-subtitle { font-size: 0.8rem; color: var(--md-sys-color-on-surface-variant); margin-top: 4px; }
 
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr;
-      gap: 20px;
+      gap: 16px;
     }
     @media (min-width: 768px) {
       .grid-2 { grid-template-columns: 1fr 1fr; }
     }
 
     .panel {
-      background: var(--md-surface);
-      border-radius: 24px;
-      border: 1px solid var(--md-border);
-      padding: 24px;
+      background: var(--md-card-bg);
+      border-radius: 20px;
+      border: 1px solid var(--md-card-border);
+      box-shadow: var(--md-shadow-sm);
+      padding: 20px;
+      margin-bottom: 16px;
     }
-    .panel-title {
-      font-size: 1.05rem;
-      font-weight: 700;
-      margin-bottom: 18px;
-    }
-    .field { margin-bottom: 18px; }
-    .field label {
-      display: block;
-      font-size: 0.86rem;
-      font-weight: 600;
-      margin-bottom: 8px;
-    }
-    .input-box {
-      width: 100%;
-      padding: 12px 14px;
+    .panel-title { font-size: 1rem; font-weight: 600; margin-bottom: 16px; }
+
+    .toggle-sec {
+      background: var(--md-sys-color-surface-variant);
       border-radius: 12px;
-      border: 1px solid var(--md-outline);
-      background: var(--md-surface-var);
-      color: var(--md-text);
-      font-size: 0.95rem;
-      outline: none;
+      padding: 14px;
+      margin-bottom: 16px;
     }
-    .range-box {
-      width: 100%;
-      margin-top: 8px;
-      accent-color: var(--md-primary);
-    }
-    .check-row {
+    .checkbox-row {
       display: flex;
       align-items: center;
-      gap: 10px;
-      padding: 12px 14px;
-      background: var(--md-surface-var);
-      border-radius: 12px;
+      gap: 12px;
       cursor: pointer;
-      margin-bottom: 14px;
+      user-select: none;
+      font-weight: 500;
       font-size: 0.9rem;
-      font-weight: 600;
     }
-    .btn {
-      padding: 12px 24px;
-      border-radius: 9999px;
-      border: none;
-      font-weight: 700;
-      font-size: 0.92rem;
-      cursor: pointer;
-      background: var(--md-primary);
-      color: var(--md-on-primary);
-      transition: transform 0.15s, opacity 0.2s;
+    .checkbox-row input { width: 20px; height: 20px; cursor: pointer; accent-color: var(--md-sys-color-primary); }
+    .toggle-status {
+      font-size: 0.8rem;
+      color: var(--md-sys-color-on-surface-variant);
+      margin-top: 8px;
     }
-    .btn:active { transform: scale(0.97); }
-    .btn-outlined {
-      background: transparent;
-      color: var(--md-primary);
-      border: 1px solid var(--md-outline);
+    .toggle-status.enabled { color: var(--md-sys-color-success); }
+
+    .form-group { margin-bottom: 16px; }
+    .form-group label {
+      font-size: 0.85rem;
+      font-weight: 500;
+      display: block;
+      margin-bottom: 6px;
     }
-    .btn-danger {
-      background: var(--md-sys-color-error);
-      color: #fff;
+    .text-field {
+      width: 100%;
+      padding: 11px 14px;
+      border-radius: 10px;
+      border: 1px solid var(--md-sys-color-outline-variant);
+      background: var(--md-input-bg);
+      color: var(--md-input-text);
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .range-field {
+      width: 100%;
+      margin-top: 10px;
+      accent-color: var(--md-sys-color-primary);
     }
 
-    /* ---- 实时统计面板 ---- */
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 11px 22px;
+      border-radius: 9999px;
+      border: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.25s;
+      min-height: 44px;
+    }
+    .btn.filled {
+      background: var(--md-sys-color-primary);
+      color: var(--md-sys-color-on-primary);
+      box-shadow: var(--md-shadow-sm);
+    }
+    .btn.filled:hover { transform: translateY(-1px); }
+    .btn.outlined {
+      background: transparent;
+      color: var(--md-sys-color-primary);
+      border: 1px solid var(--md-sys-color-outline);
+    }
+    .btn.danger {
+      background: var(--md-sys-color-error);
+      color: var(--md-sys-color-on-error);
+    }
+
+    .result-box {
+      margin-top: 16px;
+      padding: 16px;
+      background: var(--md-sys-color-surface-variant);
+      border-radius: 14px;
+    }
+    .result-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 7px 0;
+      border-bottom: 1px solid var(--md-divider);
+      font-size: 0.9rem;
+    }
+    .result-row:last-child { border-bottom: none; }
+    .result-val { font-weight: 600; color: var(--md-sys-color-primary); }
+
+    .safety-alert {
+      border-radius: 12px;
+      padding: 14px;
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border: 2px solid;
+      font-size: 0.9rem;
+    }
+    .safety-alert.high {
+      background: var(--md-sys-color-success-container);
+      border-color: var(--md-sys-color-success);
+      color: var(--md-sys-color-on-success-container);
+    }
+    .safety-alert.medium {
+      background: var(--md-sys-color-warning-container);
+      border-color: var(--md-sys-color-warning);
+      color: var(--md-sys-color-on-warning-container);
+    }
+    .safety-alert.low {
+      background: var(--md-sys-color-error-container);
+      border-color: var(--md-sys-color-error);
+      color: var(--md-sys-color-on-error-container);
+    }
+
+    /* 历史记录 */
+    .history-sec {
+      background: var(--md-sys-color-surface-variant);
+      border-radius: 12px;
+      padding: 16px;
+      margin-top: 16px;
+      max-height: 220px;
+      overflow-y: auto;
+      border: 1px solid var(--md-divider);
+    }
+    .history-item {
+      background: var(--md-card-bg);
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      font-size: 0.8rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border: 1px solid var(--md-divider);
+    }
+    .btn-mini {
+      padding: 4px 12px;
+      font-size: 0.7rem;
+      border-radius: 9999px;
+      border: none;
+      cursor: pointer;
+      font-weight: 500;
+    }
+    .btn-mini-restore { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+    .btn-mini-delete { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+
+    /* 统计面板 */
     .stat-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 12px;
-      margin-bottom: 18px;
+      gap: 10px;
+      margin-bottom: 16px;
     }
-    .stat-card {
-      background: var(--md-surface-var);
-      border-radius: 16px;
+    .stat {
+      background: var(--md-sys-color-surface-variant);
+      border-radius: 12px;
       padding: 16px;
       text-align: center;
     }
-    .stat-label { font-size: 0.72rem; color: var(--md-muted); text-transform: uppercase; font-weight: 700; }
-    .stat-val { font-size: 1.5rem; font-weight: 800; margin-top: 4px; }
-    .progress-bar {
-      height: 8px;
-      border-radius: 999px;
-      background: var(--md-surface-var);
-      overflow: hidden;
-      margin-bottom: 18px;
+    .stat-label {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--md-sys-color-on-surface-variant);
     }
-    .progress-fill {
-      height: 100%;
-      background: var(--md-primary);
-      transition: width 0.3s linear;
+    .stat-value {
+      font-size: 1.8rem;
+      font-weight: 700;
+      color: var(--md-sys-color-on-surface);
+      margin-top: 4px;
     }
 
-    /* ---- 日志系统 ---- */
+    .progress {
+      width: 100%;
+      height: 6px;
+      background: var(--md-sys-color-surface-variant);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+    .progress-bar {
+      height: 100%;
+      background: var(--md-sys-color-primary);
+      transition: width 0.4s ease;
+    }
+
+    /* 日志 */
     .log-panel {
-      margin-top: 20px;
-      background: var(--md-surface);
-      border-radius: 24px;
-      border: 1px solid var(--md-border);
-      padding: 24px;
+      background: var(--md-card-bg);
+      border-radius: 20px;
+      border: 1px solid var(--md-card-border);
+      box-shadow: var(--md-shadow-sm);
+      padding: 20px;
+      margin-top: 16px;
     }
     .log-box {
-      height: 220px;
+      height: 280px;
       overflow-y: auto;
-      background: var(--md-surface-var);
-      border-radius: 14px;
+      background: var(--md-sys-color-surface-variant);
+      border-radius: 12px;
       padding: 12px;
       font-family: monospace;
-      font-size: 0.84rem;
+      font-size: 0.8rem;
+      border: 1px solid var(--md-divider);
       display: flex;
       flex-direction: column;
       gap: 6px;
     }
     .log-entry {
-      padding: 6px 10px;
-      border-radius: 6px;
-      background: rgba(0,0,0,0.05);
+      padding: 8px 12px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
-    .log-insert { border-left: 3px solid var(--md-sys-color-error); }
-    .log-withdraw { border-left: 3px solid var(--md-primary); }
-    .log-success { border-left: 3px solid var(--md-sys-color-success); }
-    .log-info { border-left: 3px solid var(--md-sys-color-warning); }
+    .log-entry .icon { font-weight: 600; font-size: 0.7rem; opacity: 0.7; }
+    .log-insert { background: rgba(186, 26, 26, 0.06); border-left: 3px solid var(--md-sys-color-error); }
+    .log-withdraw { background: rgba(103, 80, 164, 0.05); border-left: 3px solid var(--md-sys-color-primary); }
+    .log-info { background: rgba(156, 109, 0, 0.05); border-left: 3px solid var(--md-sys-color-warning); }
+    .log-success { background: rgba(30, 123, 58, 0.06); border-left: 3px solid var(--md-sys-color-success); }
+    .log-motivation { background: rgba(125, 82, 96, 0.05); border-left: 3px solid #7D5260; }
 
-    .celebrate {
+    /* 事后健康评估 */
+    .health-report {
+      background: var(--md-sys-color-warning-container);
+      border: 2px solid var(--md-sys-color-warning);
+      border-radius: 16px;
+      padding: 20px;
+      margin-top: 16px;
+      color: var(--md-sys-color-on-warning-container);
+    }
+    .health-report h3 { font-size: 1.05rem; margin-bottom: 12px; }
+    .health-item {
+      background: var(--md-card-bg);
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      border-left: 3px solid var(--md-sys-color-warning);
+      font-size: 0.85rem;
+      color: var(--md-sys-color-on-surface);
+    }
+
+    .celebration {
       position: fixed;
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
       font-size: 3rem;
-      font-weight: 800;
-      color: var(--md-primary);
-      background: var(--md-surface);
-      padding: 20px 40px;
-      border-radius: 24px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.4);
-      z-index: 100;
+      font-weight: 700;
+      color: var(--md-sys-color-primary);
+      z-index: 1000;
+      pointer-events: none;
     }
   `;
 
@@ -647,53 +869,75 @@ app LandscapePro {
         /* ==================== 愉悦分析 Pro 视图 ==================== */
         div(class = "pro-wrap") {
           button(class = "exit-btn", on:click = { exitApp(); }) {
-            text "← 返回风景画廊";
+            text "返回画廊";
           }
 
           div(class = "pro-header") {
-            h2(class = "pro-title") { text "愉悦分析 Pro"; }
-            p(class = "pro-sub") { text "智能计算 · 物理阻力模型 · 健康状态监测"; }
+            div(class = "pro-title") { text "愉悦分析 Pro"; }
+            div(class = "pro-subtitle") { text "版本 5.0 · 智能计算 · 记忆配置 · 健康监测"; }
           }
 
           div(class = "grid-2") {
 
-            /* 左面板: 设置参数 */
+            /* 左栏: 设置 */
             div(class = "panel") {
-              h3(class = "panel-title") { text "参数设置"; }
+              div(class = "panel-title") { text "设置"; }
 
-              div(class = "check-row", on:click = { toggleLube(); }) {
-                input(attr:type = "checkbox", bind:checked = useLube)
-                span { text "使用润滑液 (减少约 30% 摩擦阻力)"; }
+              div(class = "toggle-sec") {
+                label(class = "checkbox-row") {
+                  input(attr:type = "checkbox", bind:checked = useLube, on:change = { toggleLube(); })
+                  span { text "使用润滑液"; }
+                }
+                div(class = "toggle-status" + (useLube ? " enabled" : "")) {
+                  text useLube ? "已使用润滑液 -- 摩擦减少约 30%" : "未使用润滑液";
+                }
               }
 
-              div(class = "field") {
-                label { text "玩具长度: " + string(toyLength) + " cm"; }
+              div(class = "toggle-sec") {
+                label(class = "checkbox-row") {
+                  input(attr:type = "checkbox", bind:checked = showMotivation, on:change = { toggleMotivation(); })
+                  span { text "鼓励提示"; }
+                }
+                div(class = "toggle-status" + (showMotivation ? " enabled" : "")) {
+                  text showMotivation ? "已启用 -- 将显示鼓励提示" : "已禁用";
+                }
+              }
+
+              div(class = "form-group") {
+                label { text "玩具长度 (cm)"; }
                 input(
-                  class = "input-box",
+                  class = "text-field",
                   attr:type = "number",
+                  attr:min = "1",
+                  attr:max = "150",
+                  attr:step = "0.1",
                   bind:value = toyLength,
                   on:change = { setLength($event.value); }
                 )
                 input(
-                  class = "range-box",
+                  class = "range-field",
                   attr:type = "range",
                   attr:min = "1",
                   attr:max = "150",
+                  attr:step = "0.1",
                   bind:value = toyLength,
                   on:input = { setLength($event.value); }
                 )
               }
 
-              div(class = "field") {
-                label { text "玩具直径: " + string(toyDiameter) + " cm"; }
+              div(class = "form-group") {
+                label { text "玩具直径 (cm)"; }
                 input(
-                  class = "input-box",
+                  class = "text-field",
                   attr:type = "number",
+                  attr:min = "0.5",
+                  attr:max = "10",
+                  attr:step = "0.1",
                   bind:value = toyDiameter,
                   on:change = { setDiameter($event.value); }
                 )
                 input(
-                  class = "range-box",
+                  class = "range-field",
                   attr:type = "range",
                   attr:min = "0.5",
                   attr:max = "10",
@@ -703,85 +947,150 @@ app LandscapePro {
                 )
               }
 
-              div(class = "field") {
-                label { text "循环次数: " + string(totalCount) + " 次"; }
+              div(class = "form-group") {
+                label { text "总循环次数"; }
                 input(
-                  class = "input-box",
+                  class = "text-field",
                   attr:type = "number",
                   attr:min = "2",
                   attr:max = "100",
+                  attr:step = "2",
                   bind:value = totalCount,
                   on:change = { setCount($event.value); }
                 )
               }
 
-              div(style = "display:flex; gap:10px; margin-top:10px;") {
-                button(class = "btn", on:click = { calculate(); }) { text "计算分析"; }
-                when (hasCalculated && !isRunning) {
-                  button(class = "btn btn-outlined", on:click = { startSession(); }) { text "开始进程"; }
-                }
-              }
-            }
-
-            /* 右面板: 实时监控与统计 */
-            div(class = "panel") {
-              h3(class = "panel-title") { text "实时状态监控"; }
-
-              div(class = "stat-grid") {
-                div(class = "stat-card") {
-                  div(class = "stat-label") { text "已循环次数"; }
-                  div(class = "stat-val") { text string(insertions); }
-                }
-                div(class = "stat-card") {
-                  div(class = "stat-label") { text "当前进度"; }
-                  div(class = "stat-val") { text string(progressPct) + "%"; }
-                }
-                div(class = "stat-card") {
-                  div(class = "stat-label") { text "已耗时"; }
-                  div(class = "stat-val") { text timerFormatted; }
-                }
-                div(class = "stat-card") {
-                  div(class = "stat-label") { text "预估剩余"; }
-                  div(class = "stat-val") { text remainingFormatted; }
-                }
-              }
-
-              div(class = "progress-bar") {
-                div(class = "progress-fill", style:width = string(progressPct) + "%")
-              }
-
-              when (isRunning) {
-                div(style = "display:flex; gap:10px; margin-bottom:16px;") {
-                  button(class = "btn btn-outlined", on:click = { togglePause(); }) {
-                    text isPaused ? "继续" : "暂停";
-                  }
-                  button(class = "btn btn-danger", on:click = { stopSession(); }) {
-                    text "停止";
-                  }
+              div(class = "btn-row") {
+                button(class = "btn filled", on:click = { calculate(); }) { text "计算"; }
+                button(
+                  class = "btn filled",
+                  attr:style = hasCalculated && !isRunning ? "" : "opacity:0.4; pointer-events:none;",
+                  on:click = { startSession(); }
+                ) {
+                  text "开始进程";
                 }
               }
 
               when (hasCalculated) {
-                div(style = "padding:16px; border-radius:14px; background:var(--md-surface-var); border-left:4px solid " + safetyColor + ";") {
-                  div(style = "font-weight:700; color:" + safetyColor + ";") {
-                    text safetyIcon + " " + safetyDesc;
+                div(class = "result-box") {
+                  div(class = "result-row") {
+                    span { text "循环频率:"; }
+                    span(class = "result-val") { text string(round(actionDelay * 100) / 100) + " 秒/次"; }
                   }
-                  div(style = "font-size:0.85rem; margin-top:6px; color:var(--md-muted);") {
-                    text "安全评分: " + string(safetyScore) + " / 100 · 基础间隔: " + string(round(actionDelay * 10) / 10) + "s";
+                  div(class = "result-row") {
+                    span { text "预计耗时:"; }
+                    span(class = "result-val") { text string(round(number(totalCount) * actionDelay / 60 * 10) / 10) + " 分钟"; }
+                  }
+                  div(class = "result-row") {
+                    span { text "进入总数:"; }
+                    span(class = "result-val") { text string(round(number(totalCount) / 2)) + " 次"; }
+                  }
+                  div(class = "result-row") {
+                    span { text "安全评分:"; }
+                    span(class = "result-val", style:color = safetyColor) { text string(safetyScore) + "/100"; }
+                  }
+                }
+
+                div(class = "safety-alert " + safetyLevel) {
+                  span(style = "font-weight:700; font-size:1.1rem;") { text safetyTitle; }
+                  div { text safetyDesc; }
+                }
+              }
+
+              /* 历史记录列表 */
+              when (len(settingsHistory) > 0) {
+                div(class = "history-sec") {
+                  div(style = "font-size:0.85rem; font-weight:600; margin-bottom:8px;") { text "历史设置"; }
+                  each (h in settingsHistory key h.id) {
+                    div(class = "history-item") {
+                      div {
+                        div { text string(h.len) + "cm × " + string(h.dia) + "cm | " + string(h.count) + " 循环"; }
+                        div(style = "font-size:0.75rem; color:var(--md-sys-color-on-surface-variant);") {
+                          text (h.lube ? "使用润滑液" : "无润滑液") + " | " + h.exp;
+                        }
+                      }
+                      div(style = "display:flex; gap:6px;") {
+                        button(class = "btn-mini btn-mini-restore", on:click = { restoreHist(h); }) { text "恢复"; }
+                        button(class = "btn-mini btn-mini-delete", on:click = { deleteHist(h.id); }) { text "删除"; }
+                      }
+                    }
+                  }
+                  div(style = "text-align:center; margin-top:8px;") {
+                    button(class = "btn-mini btn-mini-delete", on:click = { clearHist(); }) { text "清空全部"; }
                   }
                 }
               }
             }
 
+            /* 右栏: 统计与进度 */
+            div(class = "panel") {
+              div(class = "panel-title") { text "实时统计"; }
+
+              div(class = "stat-grid") {
+                div(class = "stat") {
+                  div(class = "stat-label") { text "已用时间"; }
+                  div(class = "stat-value") { text timerFormatted; }
+                }
+                div(class = "stat") {
+                  div(class = "stat-label") { text "进度"; }
+                  div(class = "stat-value") { text string(progressPct) + "%"; }
+                }
+                div(class = "stat") {
+                  div(class = "stat-label") { text "进入次数"; }
+                  div(class = "stat-value") { text string(insertions); }
+                }
+                div(class = "stat") {
+                  div(class = "stat-label") { text "剩余时间"; }
+                  div(class = "stat-value") { text remainingFormatted; }
+                }
+              }
+
+              div(class = "progress") {
+                div(class = "progress-bar", style:width = string(progressPct) + "%")
+              }
+
+              when (isRunning) {
+                div(class = "btn-row", style = "margin-top:16px;") {
+                  button(class = "btn outlined", on:click = { togglePause(); }) {
+                    text isPaused ? "恢复" : "暂停";
+                  }
+                  button(class = "btn danger", on:click = { stopSession(); }) {
+                    text "停止";
+                  }
+                }
+              }
+            }
           }
 
-          /* 活动日志展示 */
+          /* 活动日志 */
           div(class = "log-panel") {
-            h3(class = "panel-title") { text "活动执行日志"; }
+            div(style = "display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;") {
+              div(class = "panel-title", style = "margin-bottom:0;") { text "活动日志"; }
+              span(style = "font-size:0.75rem; padding:3px 10px; border-radius:9999px; background:var(--md-sys-color-primary-container); color:var(--md-sys-color-on-primary-container);") {
+                text isRunning ? (isPaused ? "已暂停" : "运行中") : "实时";
+              }
+            }
             div(class = "log-box") {
               each (l in logs) {
                 div(class = "log-entry log-" + l.type) {
-                  text l.icon + " " + l.text;
+                  span(class = "icon") { text l.icon; }
+                  span { text l.text; }
+                }
+              }
+            }
+
+            /* 事后健康评估 */
+            when (!isRunning && currentCycle > 0 && currentCycle >= totalCount) {
+              div(class = "health-report") {
+                h3 { text "事后健康评估"; }
+                div(class = "health-item") {
+                  text useLube ? "观察: 使用了润滑液 -- 注意保湿清洁。" : "观察: 未使用润滑液 -- 请仔细检查是否有轻微不适。";
+                }
+                div(class = "health-item") {
+                  text "出血检查: 轻微出血点属正常。若出血量大，请停止并就医。";
+                }
+                div(class = "health-item") {
+                  text "体液分泌: 适度分泌为正常的生理反应。";
                 }
               }
             }
@@ -791,69 +1100,69 @@ app LandscapePro {
       } else {
 
         /* ==================== 风景画廊主视图 ==================== */
-        header(class = "appbar") {
-          div(class = "brand") {
-            span(class = "accent") { text "风景"; }
-            span { text "集"; }
+        div(class = "container") {
+          header(class = "appbar") {
+            div(class = "brand") {
+              span(class = "accent") { text "风景"; }
+              span { text "集"; }
+            }
+            button(class = "icon-btn", on:click = { toggleTheme(); }, attr:title = "切换主题") {
+              text isDark ? "[暗]" : "[亮]";
+            }
           }
-          button(class = "icon-btn", on:click = { toggleTheme(); }, attr:title = "切换明暗主题") {
-            text isDark ? "🌙" : "☀️";
-          }
-        }
 
-        p(class = "subtitle") { text "探索来自世界各地的绝美自然摄影与极简风光"; }
+          p(class = "subtitle") { text "探索来自世界各地的绝美自然摄影"; }
 
-        div(class = "gallery") {
-          each (item in images key item) {
-            article(class = "card") {
-              div(class = "card-img-wrap") {
-                img(
-                  class = "card-img",
-                  attr:src = "https://picsum.photos/seed/jlc_" + string(seed) + "_" + string(item) + "/600/400",
-                  attr:alt = "自然风光",
-                  attr:loading = "lazy"
-                )
-              }
-              div(class = "card-info") {
-                div(class = "card-title") { text "摄影作品 #" + string(seed * 12 + item); }
-                div(class = "card-meta") { text "600 × 400 · 绝美自然"; }
+          div(class = "gallery") {
+            each (item in images key item) {
+              article(class = "card") {
+                div(class = "card-img-wrap") {
+                  img(
+                    class = "card-img",
+                    attr:src = "https://picsum.photos/seed/" + string(seed * 100 + item) + "/400/300",
+                    attr:alt = "风景照片",
+                    attr:loading = "lazy"
+                  )
+                }
+                div(class = "card-info") {
+                  div(class = "card-title") { text "图片 #" + string(seed * 100 + item); }
+                  div(class = "card-meta") { text "400 × 300 px"; }
+                }
               }
             }
           }
-        }
 
-        footer(class = "footer") {
-          p { text "图片由 Picsum CDN 实时呈现 · 每次刷新均由 JLC 虚拟状态机确定性渲染"; }
-          p {
-            span { text "© "; }
-            span(class = "year-trigger", on:click = { clickYear(); }) { text "2026"; }
-            span { text " 风景集 · 保留所有权利"; }
+          footer(class = "footer") {
+            p { text "图片由 Lorem Picsum 提供 · 每次刷新都有新惊喜"; }
+            p {
+              span { text "© "; }
+              span(class = "year-trigger", on:click = { clickYear(); }) { text "2025"; }
+              span { text " 风景集. 保留所有权利。"; }
+            }
+          }
+
+          button(class = "fab", on:click = { refreshGallery(); }, attr:title = "刷新画廊") {
+            text "+";
+          }
+
+          /* 模态框 */
+          when (stoneModalActive) {
+            div(class = "modal-mask") {
+              div(class = "modal-stone")
+            }
+          }
+
+          /* 隐藏石头 */
+          when (stoneVisible) {
+            div(class = "stone", on:click = { clickStone(); }, attr:title = "神秘石头")
           }
         }
-
-        /* 刷新按钮 (FAB) */
-        button(class = "fab", on:click = { refreshGallery(); }, attr:title = "刷新画廊") {
-          text "🔄";
-        }
-
-        /* 彩蛋石头模态框 */
-        when (stoneModalActive) {
-          div(class = "modal-mask") {
-            div(class = "modal-stone")
-          }
-        }
-
-        /* 掉落的隐藏石头 */
-        when (stoneVisible) {
-          div(class = "stone", on:click = { clickStone(); }, attr:title = "奇异的鹅卵石")
-        }
-
       }
 
-      /* 庆祝弹窗 */
+      /* 庆祝提示 */
       when (showCelebration) {
-        div(class = "celebrate") {
-          text "✨ 进程圆满完成 ✨";
+        div(class = "celebration") {
+          text "完成";
         }
       }
 
