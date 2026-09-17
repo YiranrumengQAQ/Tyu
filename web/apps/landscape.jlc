@@ -52,7 +52,7 @@ app LandscapePro {
   /* 设置历史与活动日志 */
   state settingsHistory = [];
   state logs = [
-    { type: "info", icon: "[i]", text: "系统就绪 — 0.6 故障自愈与能力图内核运行中" }
+    { type: "info", icon: "[i]", text: "系统就绪 — 玻璃拟态 M3 内核运行中" }
   ];
 
   /* ============================================================
@@ -85,7 +85,6 @@ app LandscapePro {
     seed = seed + 1;
   }
 
-  /* 彩蛋控制 */
   action clickYear() {
     yearClicks = yearClicks + 1;
     if (yearClicks >= 10) {
@@ -119,7 +118,6 @@ app LandscapePro {
     title("风景集 · 愉悦分析 Pro");
   }
 
-  /* 参数设置 */
   action toggleLube() {
     useLube = !useLube;
   }
@@ -161,7 +159,6 @@ app LandscapePro {
     logs = next;
   }
 
-  /* 核心参数计算 */
   action calculate() {
     let mult = expMultiplier;
     let base = ((number(toyLength) / 30) + (number(toyDiameter) / 3) + 1.2) * mult;
@@ -187,7 +184,6 @@ app LandscapePro {
     hasCalculated = true;
     remainingSeconds = round(number(totalCount) * actionDelay);
 
-    /* 历史记录存档 */
     let histItem = {
       id: now(),
       len: toyLength,
@@ -229,7 +225,6 @@ app LandscapePro {
     addLog("[已清空] 所有历史记录已清空", "info");
   }
 
-  /* 会话循环控制 */
   action startSession() {
     if (!hasCalculated) {
       addLog("[错误] 请先点击计算按钮", "info");
@@ -321,33 +316,36 @@ app LandscapePro {
   }
 
   /* ============================================================
-   * 样式系统 (100% 还原原版视觉)
+   * 样式系统 (M3 玻璃拟态 + 主题完美适配)
    * ============================================================ */
 
   style `
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
-    body {
-      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    
+    .theme-root {
       min-height: 100vh;
       background: var(--md-sys-color-background);
       color: var(--md-sys-color-on-background);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       line-height: 1.5;
-      transition: background 0.35s ease, color 0.35s ease;
+      transition: background 0.4s ease, color 0.4s ease;
       overflow-x: hidden;
       padding-bottom: 96px;
+      background-image: var(--md-bg-gradient);
+      background-attachment: fixed;
     }
 
-    .app.dark {
+    .theme-root[data-theme="dark"] {
       --md-sys-color-primary: #D0BCFF;
       --md-sys-color-on-primary: #381E72;
       --md-sys-color-primary-container: #4F378B;
       --md-sys-color-on-primary-container: #EADDFF;
       --md-sys-color-background: #141218;
       --md-sys-color-on-background: #E6E0E9;
-      --md-sys-color-surface: #1E1B24;
+      --md-sys-color-surface: rgba(30, 27, 36, 0.7);
       --md-sys-color-on-surface: #E6E0E9;
-      --md-sys-color-surface-variant: #2B2933;
+      --md-sys-color-surface-variant: rgba(43, 41, 51, 0.6);
       --md-sys-color-on-surface-variant: #938F99;
       --md-sys-color-outline: #49454F;
       --md-sys-color-outline-variant: #49454F;
@@ -360,25 +358,27 @@ app LandscapePro {
       --md-sys-color-error: #F2B8B5;
       --md-sys-color-error-container: #8C1D18;
       --md-sys-color-on-error-container: #FFDAD6;
-      --md-card-bg: #1E1B24;
-      --md-card-border: rgba(255, 255, 255, 0.06);
-      --md-input-bg: #2B2933;
+      --md-card-bg: rgba(30, 27, 36, 0.65);
+      --md-card-border: rgba(255, 255, 255, 0.08);
+      --md-input-bg: rgba(43, 41, 51, 0.8);
       --md-input-text: #E6E0E9;
       --md-divider: rgba(255, 255, 255, 0.08);
-      --md-shadow-sm: 0 1px 3px rgba(0,0,0,0.3);
-      --md-shadow-lg: 0 12px 28px rgba(0,0,0,0.4);
+      --md-shadow-sm: 0 4px 20px rgba(0,0,0,0.3);
+      --md-shadow-lg: 0 16px 36px rgba(0,0,0,0.5);
+      --md-bg-gradient: radial-gradient(ellipse 70% 50% at 50% -5%, rgba(208, 188, 255, 0.1) 0%, transparent 70%),
+                        radial-gradient(ellipse 40% 35% at 85% 85%, rgba(208, 188, 255, 0.05) 0%, transparent 70%);
     }
 
-    .app.light {
+    .theme-root[data-theme="light"] {
       --md-sys-color-primary: #6750A4;
       --md-sys-color-on-primary: #FFFFFF;
       --md-sys-color-primary-container: #EADDFF;
       --md-sys-color-on-primary-container: #21005D;
       --md-sys-color-background: #FFFBFE;
       --md-sys-color-on-background: #1D1B20;
-      --md-sys-color-surface: #FFFFFF;
+      --md-sys-color-surface: rgba(255, 255, 255, 0.8);
       --md-sys-color-on-surface: #1D1B20;
-      --md-sys-color-surface-variant: #F5F0FA;
+      --md-sys-color-surface-variant: rgba(245, 240, 250, 0.7);
       --md-sys-color-on-surface-variant: #79747E;
       --md-sys-color-outline: #79747E;
       --md-sys-color-outline-variant: #CAC4D0;
@@ -391,13 +391,24 @@ app LandscapePro {
       --md-sys-color-error: #BA1A1A;
       --md-sys-color-error-container: #FFDAD6;
       --md-sys-color-on-error-container: #410002;
-      --md-card-bg: #FFFFFF;
-      --md-card-border: rgba(0,0,0,0.06);
-      --md-input-bg: #F5F5F5;
+      --md-card-bg: rgba(255, 255, 255, 0.75);
+      --md-card-border: rgba(103, 80, 164, 0.12);
+      --md-input-bg: rgba(245, 240, 250, 0.9);
       --md-input-text: #1D1B20;
-      --md-divider: #E7E0EC;
-      --md-shadow-sm: 0 1px 3px rgba(0,0,0,0.08);
-      --md-shadow-lg: 0 12px 28px rgba(0,0,0,0.1);
+      --md-divider: rgba(103, 80, 164, 0.1);
+      --md-shadow-sm: 0 4px 20px rgba(103, 80, 164, 0.08);
+      --md-shadow-lg: 0 16px 36px rgba(103, 80, 164, 0.15);
+      --md-bg-gradient: radial-gradient(ellipse 70% 50% at 50% -5%, rgba(103, 80, 164, 0.08) 0%, transparent 70%),
+                        radial-gradient(ellipse 40% 35% at 85% 85%, rgba(103, 80, 164, 0.04) 0%, transparent 70%);
+    }
+
+    /* 玻璃拟态 (Glassmorphism 毛玻璃特效) */
+    .glass-panel, .panel, .card, .appbar, .pro-header, .log-panel, .result-box, .stat {
+      background: var(--md-card-bg) !important;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--md-card-border) !important;
+      box-shadow: var(--md-shadow-sm);
     }
 
     .container {
@@ -410,7 +421,9 @@ app LandscapePro {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 24px 0 16px;
+      padding: 20px 24px;
+      border-radius: 0 0 24px 24px;
+      margin-bottom: 20px;
     }
     .brand {
       font-size: 1.375rem;
@@ -423,26 +436,26 @@ app LandscapePro {
       width: 44px;
       height: 44px;
       border-radius: 50%;
-      border: none;
-      background: transparent;
+      border: 1px solid var(--md-card-border);
+      background: var(--md-card-bg);
       color: var(--md-sys-color-on-surface);
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 0.95rem;
-      font-weight: 700;
-      transition: background 0.2s, transform 0.3s;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      backdrop-filter: blur(10px);
     }
     .icon-btn:hover {
-      background: var(--md-sys-color-surface-variant);
-      transform: scale(1.05);
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
+      transform: scale(1.06);
     }
 
     .subtitle {
       color: var(--md-sys-color-on-surface-variant);
       font-size: 0.9rem;
-      margin-bottom: 28px;
+      margin: 0 0 28px 4px;
     }
 
     .gallery {
@@ -451,11 +464,8 @@ app LandscapePro {
       gap: 20px;
     }
     .card {
-      background: var(--md-card-bg);
-      border-radius: 20px;
+      border-radius: 24px;
       overflow: hidden;
-      border: 1px solid var(--md-card-border);
-      box-shadow: var(--md-shadow-sm);
       transition: transform 0.45s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.3s;
     }
     .card:hover {
@@ -476,7 +486,7 @@ app LandscapePro {
       transition: transform 0.5s ease;
     }
     .card:hover .card-img { transform: scale(1.05); }
-    .card-info { padding: 16px 18px; }
+    .card-info { padding: 18px 20px; }
     .card-title { font-weight: 600; font-size: 0.95rem; color: var(--md-sys-color-on-surface); }
     .card-meta { font-size: 0.8rem; color: var(--md-sys-color-on-surface-variant); margin-top: 4px; }
 
@@ -489,7 +499,7 @@ app LandscapePro {
       border-top: 1px solid var(--md-divider);
       line-height: 1.7;
     }
-    .year-trigger { cursor: pointer; transition: color 0.2s; }
+    .year-trigger { cursor: pointer; transition: color 0.2s; font-weight: 600; }
     .year-trigger:hover { color: var(--md-sys-color-primary); }
 
     .fab {
@@ -498,7 +508,7 @@ app LandscapePro {
       right: 24px;
       width: 56px;
       height: 56px;
-      border-radius: 18px;
+      border-radius: 20px;
       border: none;
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
@@ -506,8 +516,6 @@ app LandscapePro {
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 1.6rem;
-      font-weight: 300;
       box-shadow: var(--md-shadow-lg);
       transition: transform 0.4s cubic-bezier(0.34,1.56,0.64,1);
       z-index: 50;
@@ -537,6 +545,7 @@ app LandscapePro {
       position: fixed;
       inset: 0;
       background: rgba(0,0,0,0.45);
+      backdrop-filter: blur(8px);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -551,7 +560,7 @@ app LandscapePro {
       animation: stoneDrop 1s cubic-bezier(0.34,1.56,0.64,1);
     }
 
-    /* ---- Pro 模式主面板 ---- */
+    /* ---- Pro 面板 ---- */
     .pro-wrap {
       max-width: 900px;
       margin: 0 auto;
@@ -561,54 +570,52 @@ app LandscapePro {
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 18px;
+      padding: 9px 20px;
       border-radius: 9999px;
       background: var(--md-card-bg);
-      border: 1px solid var(--md-divider);
+      border: 1px solid var(--md-card-border);
       color: var(--md-sys-color-on-surface);
-      font-weight: 500;
+      font-weight: 600;
       font-size: 0.85rem;
       cursor: pointer;
       margin-bottom: 20px;
       box-shadow: var(--md-shadow-sm);
+      backdrop-filter: blur(10px);
+      transition: transform 0.2s;
     }
     .exit-btn:hover { transform: translateY(-2px); }
 
     .pro-header {
       text-align: center;
-      padding: 24px;
-      background: var(--md-card-bg);
-      border-radius: 20px;
-      border: 1px solid var(--md-card-border);
+      padding: 28px;
+      border-radius: 24px;
       margin-bottom: 20px;
     }
-    .pro-title { font-size: 1.6rem; font-weight: 800; letter-spacing: -0.03em; }
-    .pro-subtitle { font-size: 0.8rem; color: var(--md-sys-color-on-surface-variant); margin-top: 4px; }
+    .pro-title { font-size: 1.7rem; font-weight: 800; letter-spacing: -0.03em; }
+    .pro-subtitle { font-size: 0.82rem; color: var(--md-sys-color-on-surface-variant); margin-top: 6px; }
 
     .grid-2 {
       display: grid;
       grid-template-columns: 1fr;
-      gap: 16px;
+      gap: 20px;
     }
     @media (min-width: 768px) {
       .grid-2 { grid-template-columns: 1fr 1fr; }
     }
 
     .panel {
-      background: var(--md-card-bg);
-      border-radius: 20px;
-      border: 1px solid var(--md-card-border);
-      box-shadow: var(--md-shadow-sm);
-      padding: 20px;
-      margin-bottom: 16px;
+      border-radius: 24px;
+      padding: 24px;
+      margin-bottom: 20px;
     }
-    .panel-title { font-size: 1rem; font-weight: 600; margin-bottom: 16px; }
+    .panel-title { font-size: 1.05rem; font-weight: 700; margin-bottom: 18px; }
 
     .toggle-sec {
       background: var(--md-sys-color-surface-variant);
-      border-radius: 12px;
-      padding: 14px;
+      border-radius: 16px;
+      padding: 16px;
       margin-bottom: 16px;
+      border: 1px solid var(--md-divider);
     }
     .checkbox-row {
       display: flex;
@@ -616,7 +623,7 @@ app LandscapePro {
       gap: 12px;
       cursor: pointer;
       user-select: none;
-      font-weight: 500;
+      font-weight: 600;
       font-size: 0.9rem;
     }
     .checkbox-row input { width: 20px; height: 20px; cursor: pointer; accent-color: var(--md-sys-color-primary); }
@@ -625,52 +632,56 @@ app LandscapePro {
       color: var(--md-sys-color-on-surface-variant);
       margin-top: 8px;
     }
-    .toggle-status.enabled { color: var(--md-sys-color-success); }
+    .toggle-status.enabled { color: var(--md-sys-color-success); font-weight: 600; }
 
-    .form-group { margin-bottom: 16px; }
+    .form-group { margin-bottom: 18px; }
     .form-group label {
-      font-size: 0.85rem;
-      font-weight: 500;
+      font-size: 0.86rem;
+      font-weight: 600;
       display: block;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
     .text-field {
       width: 100%;
-      padding: 11px 14px;
-      border-radius: 10px;
+      padding: 12px 16px;
+      border-radius: 12px;
       border: 1px solid var(--md-sys-color-outline-variant);
       background: var(--md-input-bg);
       color: var(--md-input-text);
-      font-size: 0.9rem;
+      font-size: 0.95rem;
       outline: none;
+      transition: border-color 0.2s;
     }
+    .text-field:focus { border-color: var(--md-sys-color-primary); }
     .range-field {
       width: 100%;
       margin-top: 10px;
       accent-color: var(--md-sys-color-primary);
+      cursor: pointer;
     }
 
-    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .btn-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
       gap: 8px;
-      padding: 11px 22px;
+      padding: 12px 24px;
       border-radius: 9999px;
       border: none;
-      font-size: 0.9rem;
-      font-weight: 600;
+      font-size: 0.92rem;
+      font-weight: 700;
       cursor: pointer;
-      transition: all 0.25s;
-      min-height: 44px;
+      transition: transform 0.15s, opacity 0.2s;
+      min-height: 48px;
     }
+    .btn:active { transform: scale(0.97); }
     .btn.filled {
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
       box-shadow: var(--md-shadow-sm);
     }
-    .btn.filled:hover { transform: translateY(-1px); }
+    .btn.filled:hover { opacity: 0.92; transform: translateY(-1px); }
     .btn.outlined {
       background: transparent;
       color: var(--md-sys-color-primary);
@@ -682,28 +693,28 @@ app LandscapePro {
     }
 
     .result-box {
-      margin-top: 16px;
-      padding: 16px;
-      background: var(--md-sys-color-surface-variant);
-      border-radius: 14px;
+      margin-top: 18px;
+      padding: 18px;
+      border-radius: 16px;
+      border: 1px solid var(--md-divider);
     }
     .result-row {
       display: flex;
       justify-content: space-between;
-      padding: 7px 0;
+      padding: 8px 0;
       border-bottom: 1px solid var(--md-divider);
       font-size: 0.9rem;
     }
     .result-row:last-child { border-bottom: none; }
-    .result-val { font-weight: 600; color: var(--md-sys-color-primary); }
+    .result-val { font-weight: 700; color: var(--md-sys-color-primary); }
 
     .safety-alert {
-      border-radius: 12px;
-      padding: 14px;
+      border-radius: 16px;
+      padding: 16px;
       margin-top: 16px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 14px;
       border: 2px solid;
       font-size: 0.9rem;
     }
@@ -725,31 +736,31 @@ app LandscapePro {
 
     .history-sec {
       background: var(--md-sys-color-surface-variant);
-      border-radius: 12px;
-      padding: 16px;
-      margin-top: 16px;
-      max-height: 220px;
+      border-radius: 16px;
+      padding: 18px;
+      margin-top: 18px;
+      max-height: 240px;
       overflow-y: auto;
       border: 1px solid var(--md-divider);
     }
     .history-item {
       background: var(--md-card-bg);
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 8px;
-      font-size: 0.8rem;
+      padding: 12px 14px;
+      border-radius: 12px;
+      margin-bottom: 10px;
+      font-size: 0.84rem;
       display: flex;
       justify-content: space-between;
       align-items: center;
       border: 1px solid var(--md-divider);
     }
     .btn-mini {
-      padding: 4px 12px;
-      font-size: 0.7rem;
+      padding: 5px 12px;
+      font-size: 0.75rem;
       border-radius: 9999px;
       border: none;
       cursor: pointer;
-      font-weight: 500;
+      font-weight: 600;
     }
     .btn-mini-restore { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
     .btn-mini-delete { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
@@ -757,34 +768,36 @@ app LandscapePro {
     .stat-grid {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 10px;
-      margin-bottom: 16px;
+      gap: 12px;
+      margin-bottom: 18px;
     }
     .stat {
       background: var(--md-sys-color-surface-variant);
-      border-radius: 12px;
-      padding: 16px;
+      border-radius: 16px;
+      padding: 18px;
       text-align: center;
+      border: 1px solid var(--md-divider);
     }
     .stat-label {
-      font-size: 0.7rem;
+      font-size: 0.72rem;
       text-transform: uppercase;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--md-sys-color-on-surface-variant);
     }
     .stat-value {
-      font-size: 1.8rem;
-      font-weight: 700;
+      font-size: 1.6rem;
+      font-weight: 800;
       color: var(--md-sys-color-on-surface);
-      margin-top: 4px;
+      margin-top: 6px;
     }
 
     .progress {
       width: 100%;
-      height: 6px;
+      height: 8px;
       background: var(--md-sys-color-surface-variant);
       border-radius: 9999px;
       overflow: hidden;
+      border: 1px solid var(--md-divider);
     }
     .progress-bar {
       height: 100%;
@@ -793,57 +806,56 @@ app LandscapePro {
     }
 
     .log-panel {
-      background: var(--md-card-bg);
-      border-radius: 20px;
-      border: 1px solid var(--md-card-border);
-      box-shadow: var(--md-shadow-sm);
-      padding: 20px;
-      margin-top: 16px;
+      border-radius: 24px;
+      padding: 24px;
+      margin-top: 20px;
     }
     .log-box {
       height: 280px;
       overflow-y: auto;
       background: var(--md-sys-color-surface-variant);
-      border-radius: 12px;
-      padding: 12px;
+      border-radius: 16px;
+      padding: 14px;
       font-family: monospace;
-      font-size: 0.8rem;
+      font-size: 0.82rem;
       border: 1px solid var(--md-divider);
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 8px;
     }
     .log-entry {
       padding: 8px 12px;
       border-radius: 8px;
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 10px;
     }
-    .log-entry .icon { font-weight: 600; font-size: 0.7rem; opacity: 0.7; width: 34px; }
-    .log-insert { background: rgba(186, 26, 26, 0.06); border-left: 3px solid var(--md-sys-color-error); }
-    .log-withdraw { background: rgba(103, 80, 164, 0.05); border-left: 3px solid var(--md-sys-color-primary); }
-    .log-info { background: rgba(156, 109, 0, 0.05); border-left: 3px solid var(--md-sys-color-warning); }
-    .log-success { background: rgba(30, 123, 58, 0.06); border-left: 3px solid var(--md-sys-color-success); }
-    .log-motivation { background: rgba(125, 82, 96, 0.05); border-left: 3px solid #7D5260; }
+    .log-entry .icon { font-weight: 700; font-size: 0.75rem; opacity: 0.8; width: 36px; text-align: center; }
+    .log-insert { background: rgba(186, 26, 26, 0.08); border-left: 3px solid var(--md-sys-color-error); }
+    .log-withdraw { background: rgba(103, 80, 164, 0.08); border-left: 3px solid var(--md-sys-color-primary); }
+    .log-info { background: rgba(156, 109, 0, 0.08); border-left: 3px solid var(--md-sys-color-warning); }
+    .log-success { background: rgba(30, 123, 58, 0.08); border-left: 3px solid var(--md-sys-color-success); }
+    .log-motivation { background: rgba(125, 82, 96, 0.08); border-left: 3px solid #7D5260; }
 
     .health-report {
       background: var(--md-sys-color-warning-container);
       border: 2px solid var(--md-sys-color-warning);
-      border-radius: 16px;
-      padding: 20px;
-      margin-top: 16px;
+      border-radius: 20px;
+      padding: 22px;
+      margin-top: 18px;
       color: var(--md-sys-color-on-warning-container);
+      box-shadow: var(--md-shadow-sm);
     }
-    .health-report h3 { font-size: 1.05rem; margin-bottom: 12px; }
+    .health-report h3 { font-size: 1.1rem; margin-bottom: 14px; font-weight: 700; }
     .health-item {
       background: var(--md-card-bg);
-      padding: 12px;
-      border-radius: 8px;
-      margin-bottom: 8px;
-      border-left: 3px solid var(--md-sys-color-warning);
-      font-size: 0.85rem;
+      padding: 14px;
+      border-radius: 12px;
+      margin-bottom: 10px;
+      border-left: 4px solid var(--md-sys-color-warning);
+      font-size: 0.88rem;
       color: var(--md-sys-color-on-surface);
+      border: 1px solid var(--md-divider);
     }
 
     .celebration {
@@ -851,30 +863,42 @@ app LandscapePro {
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 3rem;
-      font-weight: 700;
-      color: var(--md-sys-color-primary);
+      font-size: 2.8rem;
+      font-weight: 800;
+      color: var(--md-sys-color-on-primary);
+      background: var(--md-sys-color-primary);
+      padding: 24px 48px;
+      border-radius: 28px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.4);
       z-index: 1000;
       pointer-events: none;
+      animation: celebratePop 0.5s cubic-bezier(0.34,1.56,0.64,1);
+    }
+    @keyframes celebratePop {
+      from { transform: translate(-50%, -50%) scale(0.6); opacity: 0; }
+      to { transform: translate(-50%, -50%) scale(1); opacity: 1; }
     }
   `;
 
   /* ============================================================
-   * 视图树 (View Tree)
+   * 视图树 (View Tree) - 内联纯 SVG 图标 + 玻璃拟态布局
    * ============================================================ */
 
   view {
-    div(class = "app", class:dark = isDark, class:light = !isDark) {
+    div(class = "theme-root", attr:data-theme = theme) {
 
       when (viewMode == "app") {
 
         /* ==================== 愉悦分析 Pro 视图 ==================== */
         div(class = "pro-wrap") {
           button(class = "exit-btn", on:click = { exitApp(); }) {
+            svg(attr:width = "16", attr:height = "16", attr:viewBox = "0 0 24 24", attr:fill = "none", attr:stroke = "currentColor", attr:stroke-width = "2.5") {
+              polyline(attr:points = "15 18 9 12 15 6") {}
+            }
             text "返回画廊";
           }
 
-          div(class = "pro-header") {
+          div(class = "pro-header glass-panel") {
             div(class = "pro-title") { text "愉悦分析 Pro"; }
             div(class = "pro-subtitle") { text "版本 5.0 · 智能计算 · 记忆配置 · 健康监测"; }
           }
@@ -882,7 +906,7 @@ app LandscapePro {
           div(class = "grid-2") {
 
             /* 左栏: 设置 */
-            div(class = "panel") {
+            div(class = "panel glass-panel") {
               div(class = "panel-title") { text "设置"; }
 
               div(class = "toggle-sec") {
@@ -974,7 +998,7 @@ app LandscapePro {
               }
 
               when (hasCalculated) {
-                div(class = "result-box") {
+                div(class = "result-box glass-panel") {
                   div(class = "result-row") {
                     span { text "循环频率:"; }
                     span(class = "result-val") { text string(round(actionDelay * 100) / 100) + " 秒/次"; }
@@ -1005,7 +1029,7 @@ app LandscapePro {
 
               when (len(settingsHistory) > 0) {
                 div(class = "history-sec") {
-                  div(style = "font-size:0.85rem; font-weight:600; margin-bottom:8px;") { text "历史设置"; }
+                  div(style = "font-size:0.85rem; font-weight:600; margin-bottom:10px;") { text "历史设置"; }
                   each (h in settingsHistory key h.id) {
                     div(class = "history-item") {
                       div {
@@ -1020,7 +1044,7 @@ app LandscapePro {
                       }
                     }
                   }
-                  div(style = "text-align:center; margin-top:8px;") {
+                  div(style = "text-align:center; margin-top:10px;") {
                     button(class = "btn-mini btn-mini-delete", on:click = { clearHist(); }) { text "清空全部"; }
                   }
                 }
@@ -1028,7 +1052,7 @@ app LandscapePro {
             }
 
             /* 右栏: 统计与进度 */
-            div(class = "panel") {
+            div(class = "panel glass-panel") {
               div(class = "panel-title") { text "实时统计"; }
 
               div(class = "stat-grid") {
@@ -1055,7 +1079,7 @@ app LandscapePro {
               }
 
               when (isRunning) {
-                div(class = "btn-row", style = "margin-top:16px;") {
+                div(class = "btn-row", style = "margin-top:20px;") {
                   button(class = "btn outlined", on:click = { togglePause(); }) {
                     text isPaused ? "恢复" : "暂停";
                   }
@@ -1067,11 +1091,11 @@ app LandscapePro {
             }
           }
 
-          /* 活动日志与评估报告 */
-          div(class = "log-panel") {
-            div(style = "display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;") {
+          /* 活动日志与健康评估 */
+          div(class = "log-panel glass-panel") {
+            div(style = "display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;") {
               div(class = "panel-title", style = "margin-bottom:0;") { text "活动日志"; }
-              span(style = "font-size:0.75rem; padding:3px 10px; border-radius:9999px; background:var(--md-sys-color-primary-container); color:var(--md-sys-color-on-primary-container);") {
+              span(style = "font-size:0.75rem; padding:4px 12px; border-radius:9999px; background:var(--md-sys-color-primary-container); color:var(--md-sys-color-on-primary-container); font-weight:600;") {
                 text isRunning ? (isPaused ? "已暂停" : "运行中") : "实时";
               }
             }
@@ -1105,13 +1129,31 @@ app LandscapePro {
 
         /* ==================== 风景画廊主视图 ==================== */
         div(class = "container") {
-          header(class = "appbar") {
+          header(class = "appbar glass-panel") {
             div(class = "brand") {
               span(class = "accent") { text "风景"; }
               span { text "集"; }
             }
             button(class = "icon-btn", on:click = { toggleTheme(); }, attr:title = "切换主题") {
-              text isDark ? "[暗]" : "[亮]";
+              when (isDark) {
+                /* 太阳 SVG 图标 */
+                svg(attr:width = "18", attr:height = "18", attr:viewBox = "0 0 24 24", attr:fill = "none", attr:stroke = "currentColor", attr:stroke-width = "2") {
+                  circle(attr:cx = "12", attr:cy = "12", attr:r = "5") {}
+                  line(attr:x1 = "12", attr:y1 = "1", attr:x2 = "12", attr:y2 = "3") {}
+                  line(attr:x1 = "12", attr:y1 = "21", attr:x2 = "12", attr:y2 = "23") {}
+                  line(attr:x1 = "4.22", attr:y1 = "4.22", attr:x2 = "5.64", attr:y2 = "5.64") {}
+                  line(attr:x1 = "18.36", attr:y1 = "18.36", attr:x2 = "19.78", attr:y2 = "19.78") {}
+                  line(attr:x1 = "1", attr:y1 = "12", attr:x2 = "3", attr:y2 = "12") {}
+                  line(attr:x1 = "21", attr:y1 = "12", attr:x2 = "23", attr:y2 = "12") {}
+                  line(attr:x1 = "4.22", attr:y1 = "19.78", attr:x2 = "5.64", attr:y2 = "18.36") {}
+                  line(attr:x1 = "18.36", attr:y1 = "5.64", attr:x2 = "19.78", attr:y2 = "4.22") {}
+                }
+              } else {
+                /* 月亮 SVG 图标 */
+                svg(attr:width = "18", attr:height = "18", attr:viewBox = "0 0 24 24", attr:fill = "none", attr:stroke = "currentColor", attr:stroke-width = "2") {
+                  path(attr:d = "M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z") {}
+                }
+              }
             }
           }
 
@@ -1119,7 +1161,7 @@ app LandscapePro {
 
           div(class = "gallery") {
             each (item in images key item) {
-              article(class = "card") {
+              article(class = "card glass-panel") {
                 div(class = "card-img-wrap") {
                   img(
                     class = "card-img",
@@ -1146,7 +1188,11 @@ app LandscapePro {
           }
 
           button(class = "fab", on:click = { refreshGallery(); }, attr:title = "刷新画廊") {
-            text "＋";
+            /* 旋转刷新 SVG 图标 */
+            svg(attr:width = "24", attr:height = "24", attr:viewBox = "0 0 24 24", attr:fill = "none", attr:stroke = "currentColor", attr:stroke-width = "2.5") {
+              polyline(attr:points = "23 4 23 10 17 10") {}
+              path(attr:d = "M20.49 15a9 9 0 1 1-2.12-9.36L23 10") {}
+            }
           }
 
           /* 模态遮罩与石头掉落 */
