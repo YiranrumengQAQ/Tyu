@@ -60,8 +60,8 @@ app Hello {
  * 1. ABI v3
  * ------------------------------------------------------------------ */
 
-test("0.6 内核宣告 ABI v3 并继续接受 v1/v2 模块", () => {
-  assert.equal(VERSION, "0.6.0");
+test("0.6.1 内核：版本升级但 ABI 锁死在 v3，继续接受 v1/v2 模块", () => {
+  assert.equal(VERSION, "0.6.1");
   assert.equal(ABI_VERSION, "jlc-abi/3");
   assert.equal(BYTECODE_VERSION, 3);
 

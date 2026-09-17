@@ -1,5 +1,5 @@
 /*
- * JLC Virtual Machine
+ * JLC Virtual Machine — 0.6.1 Full Runtime Takeover / Performance Kernel
  * A CSP-safe bytecode runtime for declarative web programs.
  * Copyright (c) 2026 JLC contributors. MIT licensed.
  *
@@ -8,9 +8,20 @@
  * stack-based dispatch loop that drives Signals, Scopes, Effects and DOM.
  * It deliberately contains no Tokenizer or Parser: compiling JLC source
  * into bytecode is the job of jlc-compiler.js.
+ *
+ * 0.6.1 不升级 ABI（仍是 jlc-abi/3 / 字节码 v3）：0.4 / 0.5 / 0.6 的
+ * .jbc 全部继续跑。本版把 0.6 已建立的全面接管能力做成大型项目可承载的
+ * 高性能执行内核：
+ *   Scheduler v2.1（老化 / 车道配额 / 饥饿营救）· VM Frame Budget ·
+ *   DOM Transaction + Mutation Coalescing · EACH Diff Engine 2 + Keyed
+ *   Node Cache · Reactive Batch 2.0 + Dependency Graph · Profile 2.0 ·
+ *   Hot Path Cache · Resource Kernel 2.0（soft/hard）· Memory Accountant ·
+ *   Delta Checkpoint · Fault Auto-Escalation · Leak Detector ·
+ *   Network Scheduler · Cancellation Kernel。
+ * 新增子系统拆分在 ./kernel/（单向依赖，对外表面不变）。
  */
 
-export const VERSION = "0.6.0";
+export const VERSION = "0.6.1";
 export const BYTECODE_VERSION = 3;
 // 1 = 无需求清单的旧模块；2 = 0.4 模块；3 = 0.6 模块（新增能力图 / 资源清单 / 标志段）。
 // 旧模块仍可装载，走兼容路径（运行期逐条把关 + 缺省资源清单）。
@@ -19,6 +30,50 @@ export const ABI_VERSION = "jlc-abi/3";
 // ABI v3 的最低兼容内核：0.4 内核（jlc-abi/2）只能读 v1/v2，读 v3 会显式报错而不是误解码。
 export const ABI_MIN_KERNEL = "0.6.0";
 export const MAGIC = 0x4a4c4342; // "JLCB" — JLC Bytecode container
+
+/* ---- 0.6.1 Performance Kernel 子系统（./kernel/，不反向依赖本文件） ---- */
+import {
+  FrameBudgetManager,
+  DEFAULT_LANE_BUDGETS,
+  LaneGovernor,
+  DEFAULT_LANE_QUOTAS,
+  DomTransaction,
+  KeyedNodeCache,
+  MemoryAccountant,
+  estimateBytes,
+  LeakDetector,
+  LEAK_KINDS,
+  CancellationRegistry,
+  HotPathCache,
+  describeDependencyGraph,
+  dependentsOf,
+  diffSignals,
+  materializeSignals,
+  promoteDependents,
+  estimateEntryBytes,
+} from "./kernel/index.js";
+
+// 0.6.1 子系统对外出口：宿主可以直接 import { DomTransaction } from "./jlc-vm.js"。
+export {
+  FrameBudgetManager,
+  DEFAULT_LANE_BUDGETS,
+  LaneGovernor,
+  DEFAULT_LANE_QUOTAS,
+  DomTransaction,
+  KeyedNodeCache,
+  MemoryAccountant,
+  estimateBytes,
+  LeakDetector,
+  LEAK_KINDS,
+  CancellationRegistry,
+  HotPathCache,
+  describeDependencyGraph,
+  dependentsOf,
+  diffSignals,
+  materializeSignals,
+  promoteDependents,
+  estimateEntryBytes,
+};
 
 const CALLABLE = Symbol("jlc.callable");
 const REQUEST = Symbol("jlc.request");
@@ -225,13 +280,24 @@ export function normalizeCapabilityGrants(input, prefix = "", out = {}) {
   return out;
 }
 
-/** 资源限额表：只认 RESOURCE_KINDS，打错字段名直接拒绝（配额静默失效最危险）。 */
+/**
+ * 资源限额表：只认 RESOURCE_KINDS，打错字段名直接拒绝（配额静默失效最危险）。
+ * 0.6.1：每种资源既接受数字（= 硬限额，兼容 0.6），也接受
+ * `{ soft, hard }`——soft 触发警告（burst 容忍区），hard 才抛 JLCQuotaError。
+ */
 export function normalizeResourceLimits(input) {
   if (input == null) return null;
   if (typeof input !== "object" || Array.isArray(input)) throw new JLCRuntimeError("resources 必须是对象");
   const out = {};
   for (const [kind, value] of Object.entries(input)) {
     if (!RESOURCE_KINDS.includes(kind)) throw new JLCRuntimeError(`未知资源种类“${kind}”：可用 ${RESOURCE_KINDS.join(", ")}`);
+    if (value !== null && typeof value === "object") {
+      const hard = Math.max(0, Math.floor(Number(value.hard ?? value.limit ?? 0) || 0));
+      const soft = Math.max(0, Math.floor(Number(value.soft ?? 0) || 0));
+      if (soft > hard && hard > 0) throw new JLCRuntimeError(`资源 ${kind} 的 soft 限额不能高于 hard 限额`);
+      out[kind] = { hard, soft };
+      continue;
+    }
     out[kind] = Math.max(0, Math.floor(Number(value) || 0));
   }
   return out;
@@ -515,6 +581,9 @@ function policyAllow(runtime, kind, detail, message) {
  * ================================================================ */
 
 export const FAULT_LEVELS = Object.freeze(["ignore", "degrade", "recover", "restart", "rollback", "stop"]);
+
+/** 0.6.1 自动升级链：本级动作失败 → 下一级接手（不新增第七级）。 */
+export const FAULT_ESCALATION = Object.freeze({ restart: "rollback", rollback: "degrade" });
 
 /** 旧档名 → 0.6 档名（兼容 0.3/0.4 的 report/warn/throw 写法）。 */
 export const FAULT_ALIASES = Object.freeze({
@@ -1013,14 +1082,40 @@ export const DEFAULT_RESOURCE_LIMITS = Object.freeze({
   checkpoints: 8,
 });
 
+/* ================================================================
+ * 0.6.1 资源内核 2.0（在 0.6 账本之上叠加）：
+ *   soft limit  —— burst 容忍区，越过只发警告（不杀任务）；
+ *   hard limit  —— 真正的配额出口，越过才抛 JLCQuotaError；
+ *   warning     —— 首次越过 soft、以及每次越过 hard 前都记账。
+ * 旧写法（纯数字）完全兼容：数字即 hard，soft 默认 = hard（无容忍区）。
+ * ================================================================ */
+
 export class ResourceKernel {
   constructor(runtime, limits = {}) {
     this.runtime = runtime;
-    this.limits = { ...DEFAULT_RESOURCE_LIMITS, ...limits };
+    this.limits = { ...DEFAULT_RESOURCE_LIMITS };
+    this.softLimits = new Map();
+    for (const [kind, value] of Object.entries(limits ?? {})) this.setLimit(kind, value);
     this.counters = new Map();
     this.peaks = new Map();
+    this.warnings = new Map(); // kind → 警告次数
     this.events = [];
     this.maxEvents = 64;
+  }
+
+  /** 限额写入：数字 = hard；{ soft, hard } = 双限。 */
+  setLimit(kind, value) {
+    if (!RESOURCE_KINDS.includes(kind)) throw new JLCRuntimeError(`未知资源种类“${kind}”`);
+    if (value !== null && typeof value === "object") {
+      const hard = Math.max(0, Math.floor(Number(value.hard ?? value.limit ?? 0) || 0));
+      const soft = Math.max(0, Math.floor(Number(value.soft ?? 0) || 0));
+      this.limits[kind] = hard;
+      this.softLimits.set(kind, soft > 0 ? soft : 0);
+    } else {
+      this.limits[kind] = Math.max(0, Math.floor(Number(value) || 0));
+      this.softLimits.set(kind, 0); // 0 = 未单独设置，按默认容忍区（80%）处理
+    }
+    return this;
   }
 
   limitOf(kind) {
@@ -1028,9 +1123,18 @@ export class ResourceKernel {
     return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
   }
 
-  setLimit(kind, value) {
+  /** soft 阈值：显式设置优先；否则默认硬限额的 80%（计划：80% 警告，100% 才错）。 */
+  softLimitOf(kind) {
+    const hard = this.limitOf(kind);
+    if (hard <= 0) return 0;
+    const configured = this.softLimits.get(kind) ?? 0;
+    if (configured > 0) return Math.min(configured, hard);
+    return Math.max(1, Math.ceil(hard * 0.8));
+  }
+
+  setSoftLimit(kind, value) {
     if (!RESOURCE_KINDS.includes(kind)) throw new JLCRuntimeError(`未知资源种类“${kind}”`);
-    this.limits[kind] = Math.max(0, Math.floor(Number(value) || 0));
+    this.softLimits.set(kind, Math.max(0, Math.floor(Number(value) || 0)));
     return this;
   }
 
@@ -1047,6 +1151,8 @@ export class ResourceKernel {
       case "listeners": return metrics.listeners;
       case "requests": return metrics.requests;
       case "tasks": return this.runtime?.scheduler?.taskCount?.() ?? 0;
+      // 0.6.1：memory 不再是手动计数器——Memory Accountant 按分户账实时折算（KB）。
+      case "memory": return this.runtime?.memoryAccountant ? this.runtime.memoryAccountant.usageKB() : null;
       default: return null;
     }
   }
@@ -1061,13 +1167,18 @@ export class ResourceKernel {
     return this.peaks.get(kind) ?? this.usageOf(kind);
   }
 
-  /** 记账 + 越界即抛。这是内核里唯一的配额出口。 */
+  /**
+   * 记账 + 配额裁决。这是内核里唯一的配额出口。
+   * 0.6.1：越过 soft 只警告（短暂 burst 不杀任务）；越过 hard 才抛。
+   */
   reserve(kind, amount = 1) {
     if (!RESOURCE_KINDS.includes(kind)) return null;
     const used = this.usageOf(kind);
     const limit = this.limitOf(kind);
     const next = used + amount;
     if (limit > 0 && next > limit) throw this.quota(kind, used, amount, limit);
+    const soft = this.softLimitOf(kind);
+    if (soft > 0 && next > soft && used <= soft) this.warnSoft(kind, next, soft, limit);
     if (this.derived(kind) == null) {
       this.counters.set(kind, next);
       this.peaks.set(kind, Math.max(this.peaks.get(kind) ?? 0, next));
@@ -1075,6 +1186,20 @@ export class ResourceKernel {
       this.peaks.set(kind, Math.max(this.peaks.get(kind) ?? 0, next));
     }
     return next;
+  }
+
+  warnSoft(kind, used, soft, hard) {
+    this.warnings.set(kind, (this.warnings.get(kind) ?? 0) + 1);
+    if (this.runtime?.counters) this.runtime.counters.warnings += 1;
+    this.note({ kind, used, soft, hard, action: "warn" });
+    const onWarn = this.runtime?.onWarn;
+    if (typeof onWarn === "function") {
+      try {
+        onWarn({ code: "E_RESOURCE_WARN", resource: kind, used, soft, hard });
+      } catch {
+        // 警告回调异常不影响内核
+      }
+    }
   }
 
   release(kind, amount = 1) {
@@ -1103,20 +1228,28 @@ export class ResourceKernel {
       const used = this.usageOf(kind);
       const limit = this.limitOf(kind);
       if (used === 0 && limit === 0 && !this.counters.has(kind)) continue;
+      const soft = this.softLimitOf(kind);
       view[kind] = Object.freeze({
         used,
         limit,
+        soft,
         peak: this.peakOf(kind),
         ratio: limit > 0 ? used / limit : 0,
+        // 0.6.1：资源状态三态——ok / warn（越过 soft）/ quota（越过 hard）
+        state: limit > 0 && used > limit ? "quota" : soft > 0 && used > soft ? "warn" : "ok",
+        warnings: this.warnings.get(kind) ?? 0,
       });
     }
     return Object.freeze(view);
   }
 
   totals() {
+    let warnings = 0;
+    for (const count of this.warnings.values()) warnings += count;
     return Object.freeze({
       events: this.events.length,
       exceeded: this.events.filter((event) => event.action === "quota").length,
+      warnings,
     });
   }
 
@@ -1137,6 +1270,7 @@ export class ResourceKernel {
     return Object.freeze({
       counters: Object.freeze(Object.fromEntries(this.counters)),
       limits: Object.freeze({ ...this.limits }),
+      soft: Object.freeze(Object.fromEntries(this.softLimits)),
     });
   }
 
@@ -1144,6 +1278,7 @@ export class ResourceKernel {
     if (!snapshot) return this;
     this.counters = new Map(Object.entries(snapshot.counters ?? {}));
     this.limits = { ...this.limits, ...(snapshot.limits ?? {}) };
+    if (snapshot.soft) this.softLimits = new Map(Object.entries(snapshot.soft));
     return this;
   }
 }
@@ -1159,11 +1294,14 @@ export class ResourceKernel {
  * ================================================================ */
 
 export class CheckpointStore {
-  constructor(runtime, { limit = 8 } = {}) {
+  constructor(runtime, { limit = 8, delta = false } = {}) {
     this.runtime = runtime;
     this.limit = Math.max(1, limit);
+    this.delta = Boolean(delta);
     this.entries = new Map();
     this.serial = 0;
+    this.lastFullSignals = null; // delta 模式：最近一次拍照的全量基准
+    this.bytes = 0;              // 全部条目自身占用（结构共享后的净占用）
   }
 
   capture(label, extra = null) {
@@ -1174,23 +1312,49 @@ export class CheckpointStore {
       const binding = runtime.globals.bindings[slot];
       if (binding?.kind === "signal" && binding.signal.writable) signals[name] = binding.signal.value;
     }
-    const entry = Object.freeze({
+    // 0.6.1 Checkpoint 2.0：delta 模式只存「相对上一份的变化」，其余结构共享。
+    const changed = this.delta ? diffSignals(signals, this.lastFullSignals) : null;
+    const isDelta = this.delta && changed != null;
+    const entry = {
       label: String(label ?? `cp-${this.serial + 1}`),
       serial: (this.serial += 1),
       at: Date.now(),
-      signals: Object.freeze(signals),
+      signals: isDelta ? null : Object.freeze(signals),
       signalNames: Object.freeze(Object.keys(signals)),
+      changed: isDelta ? Object.freeze(changed) : null,
+      base: isDelta ? this.lastLabel ?? null : null,
+      delta: isDelta,
       permissions: runtime.permissions?.snapshot?.() ?? null,
       resources: runtime.resources?.snapshot?.() ?? null,
       faultCounts: runtime.metrics ? Object.freeze({ faults: runtime.metrics.faults, cycles: runtime.metrics.cycles }) : null,
       meta: extra ? Object.freeze({ ...extra }) : null,
-    });
+    };
+    this.lastFullSignals = signals;
+    this.lastLabel = entry.label;
+    const bytes = estimateEntryBytes(entry);
+    entry.bytes = bytes;
+    this.bytes += bytes;
+    // 注意：条目在账本内保持可变——淘汰时 delta 依赖者要能被原地升级；
+    // 对外视图（list()）仍然返回冻结副本。
     this.entries.set(entry.label, entry);
+    runtime.memoryAccountant?.charge("checkpoints", bytes);
     if (this.entries.size > this.limit) {
       const oldest = [...this.entries.values()].sort((left, right) => left.serial - right.serial)[0];
-      if (oldest) this.entries.delete(oldest.label);
+      if (oldest) this.evict(oldest.label);
     }
-    return entry;
+    return Object.freeze({ ...this.entries.get(entry.label) });
+  }
+
+  evict(label) {
+    const entry = this.entries.get(label);
+    if (!entry) return;
+    // delta 链保护：被淘汰者若还是别人的 base，先趁它还在账上把依赖者
+    // 升级成完整快照，再执行删除——否则物化时链条断裂。
+    promoteDependents(this.entries, label);
+    this.entries.delete(label);
+    this.bytes -= entry.bytes ?? 0;
+    this.runtime?.memoryAccountant?.release("checkpoints", entry.bytes ?? 0);
+    if (this.lastLabel === label) this.lastFullSignals = null;
   }
 
   /** 回滚：恢复 signal 值（在有界批次里触发重渲染），并返回被恢复的检查点。 */
@@ -1198,12 +1362,16 @@ export class CheckpointStore {
     const runtime = this.runtime;
     const entry = this.entries.get(String(label));
     if (!entry || !runtime || runtime.destroyed) return null;
+    // delta 条目沿 base 链物化出完整状态；完整条目原样使用。
+    const signals = entry.delta || entry.base ? materializeSignals(this.entries, entry) : entry.signals;
     runtime.permissions?.restore?.(entry.permissions);
     runtime.resources?.restore?.(entry.resources);
     runtime.transaction(() => {
       for (const name of entry.signalNames) {
         const binding = runtime.globals?.resolve?.(name);
-        if (binding?.kind === "signal" && binding.signal.writable) binding.signal.set(sanitizeValue(entry.signals[name]), true);
+        if (binding?.kind === "signal" && binding.signal.writable) {
+          binding.signal.set(sanitizeValue(Object.hasOwn(signals, name) ? signals[name] : null), true);
+        }
       }
     });
     return entry;
@@ -1215,16 +1383,24 @@ export class CheckpointStore {
       at: entry.at,
       serial: entry.serial,
       signals: entry.signalNames.length,
+      delta: Boolean(entry.delta),
+      base: entry.base ?? null,
+      bytes: entry.bytes ?? 0,
       meta: entry.meta,
     })));
   }
 
   drop(label) {
-    return this.entries.delete(String(label));
+    if (!this.entries.has(String(label))) return false;
+    this.evict(String(label));
+    return true;
   }
 
   clear() {
     this.entries.clear();
+    this.bytes = 0;
+    this.lastFullSignals = null;
+    this.lastLabel = null;
   }
 }
 
@@ -1554,6 +1730,12 @@ class Scope {
         this.runtime?.reportError(error);
       }
     }
+    // 0.6.1 Cancellation Kernel：组件没了，它名下的任务/请求不许再跑。
+    try {
+      this.runtime?.cancelScope?.(this);
+    } catch {
+      // 取消失败不阻塞销毁流程
+    }
     if (this.runtime) this.runtime.metrics.scopes -= 1;
     this.parent = null;
     this.runtime = null;
@@ -1574,12 +1756,20 @@ class Effect {
     this.disposed = false;
     this.queued = false;
     runtime.metrics.effects += 1;
+    // 0.6.1：Effect Dependency Graph 的节点登记（依赖图成为一等公民）。
+    runtime.effectRegistry?.add(this);
     scope.adopt(this);
     this.run();
   }
 
   schedule() {
-    if (!this.disposed) this.runtime.scheduler.enqueue(this);
+    if (this.disposed) return;
+    // Reactive Batch 2.0：同一事务内重复入队直接合并（effect dedupe）。
+    if (this.queued) {
+      this.runtime.counters && (this.runtime.counters.effectDeduped += 1);
+      return;
+    }
+    this.runtime.scheduler.enqueue(this);
   }
 
   onCleanup(cleanup) {
@@ -1622,6 +1812,7 @@ class Effect {
     this.disposed = true;
     this.clearRun();
     this.scope?.disposables.delete(this);
+    this.runtime.effectRegistry?.delete(this);
     this.runtime.metrics.effects -= 1;
     this.callback = null;
     this.signal = null;
@@ -1670,6 +1861,17 @@ export class JLCBudgetError extends JLCRuntimeError {
   }
 }
 
+/* ================================================================
+ * 0.6.1 Scheduler v2.1（在 0.6 任务层之上叠加公平性治理）
+ *
+ * 不新增通道：P0..P7 照旧。新增三个机制，全部由 LaneGovernor 裁决：
+ *   1. Priority Aging      —— 等待越久有效优先级越高（有界）
+ *   2. Lane Quota          —— 单车道连跑 N 片强制让出，先查其它车道
+ *   3. Starvation Guard    —— 饥饿车道直接营救
+ * 另接入 VM Frame Budget：一次 flush = 一帧，任务领取本帧内所属
+ * 车道的动态截止时间；帧结束统一提交 DOM 事务。
+ * ================================================================ */
+
 class Scheduler {
   constructor(runtime) {
     this.runtime = runtime;
@@ -1679,6 +1881,12 @@ class Scheduler {
     this.flushing = false;
     this.current = null;
     this.seq = 0;
+    // ---- 0.6.1 公平调度 ----
+    this.governor = runtime?.options?.schedulerGovernor ?? null;
+    this.frameBudget = runtime?.frameBudget ?? null;
+    this.frame = null;
+    this.lastLane = null;
+    this.transactionSerial = 0;
   }
 
   taskCount() {
@@ -1707,14 +1915,16 @@ class Scheduler {
   submit(task) {
     if (!this.runtime || this.runtime.destroyed || typeof task?.run !== "function") return null;
     const kind = task.kind ?? "task";
+    const priority = normalizePriority(task.priority ?? TASK_PRIORITY[kind] ?? PRIORITY.EFFECT);
+    const deadline = Math.max(0, Number(task.deadline ?? 0) || 0);
     const normalized = {
       id: NEXT_TASK_ID++,
       seq: (this.seq += 1),
       kind,
       label: String(task.label ?? kind),
-      priority: normalizePriority(task.priority ?? TASK_PRIORITY[kind] ?? PRIORITY.EFFECT),
+      priority,
       budget: Math.max(0, Number(task.budget ?? this.runtime.options.maxSliceSteps ?? 0) || 0),
-      deadline: Math.max(0, Number(task.deadline ?? 0) || 0),
+      deadline,
       sliceable: Boolean(task.sliceable),
       yieldToHost: Boolean(task.yieldToHost),
       resumable: task.resumable !== false,
@@ -1724,6 +1934,9 @@ class Scheduler {
       scope: task.scope ?? null,
       submitted: Date.now(),
       resumed: Boolean(task.resumed),
+      // 0.6.1 Cancellation Kernel：每个任务一个取消令牌；续跑任务沿用原令牌。
+      token: task.token ?? this.runtime.cancellation?.register({ label: String(task.label ?? kind), scope: task.scope ?? null }) ?? null,
+      transaction: task.transaction ?? this.transactionSerial,
     };
     this.tasks.push(normalized);
     this.wake();
@@ -1756,19 +1969,62 @@ class Scheduler {
     queueMicrotask(tick);
   }
 
+  /**
+   * 0.6.1 公平选取：老化后的有效优先级 + 车道配额 + 饥饿营救。
+   * 配额全部拒绝时回退到原始优先级选取，保证不会死锁。
+   */
   takeTask() {
-    let best = 0;
-    let chosen = this.tasks[0];
-    for (let index = 1; index < this.tasks.length; index += 1) {
-      const candidate = this.tasks[index];
-      const better = candidate.priority < chosen.priority
-        || (candidate.priority === chosen.priority && candidate.deadline > 0 && (chosen.deadline === 0 || candidate.deadline < chosen.deadline))
-        || (candidate.priority === chosen.priority && candidate.deadline === chosen.deadline && candidate.seq < chosen.seq);
-      if (better) {
-        best = index;
-        chosen = candidate;
+    const governor = this.governor;
+    const now = Date.now();
+    if (!governor) return this.pickByPriority(null, now);
+
+    const pendingLanes = new Set(this.tasks.map((task) => task.priority));
+    // 饥饿营救：先找被饿得最久的车道——它直接获得本轮选取权。
+    const starved = governor.starvedLane(pendingLanes, now);
+    if (starved != null) governor.rescues += 1;
+
+    let chosen = this.pickByPriority(governor, now, starved);
+    if (!chosen) chosen = this.pickByPriority(null, now); // 配额全拒 → 回退，绝不死锁
+    if (chosen) {
+      // 上一车道因配额被拦下、本轮换了车道 → 记一次强制让出。
+      if (this.lastLane != null && chosen.priority !== this.lastLane && !governor.canRun(this.lastLane, pendingLanes)) {
+        governor.noteForcedYield(this.lastLane);
+      }
+      governor.noteSwitched(this.lastLane, chosen.priority);
+      governor.noteRan(chosen.priority, now);
+      this.lastLane = chosen.priority;
+      // VM Frame Budget：派发时刻领取本帧内该车道的动态截止时间。
+      if (this.frameBudget?.enabled) {
+        const frameDeadline = this.frameBudget.deadlineFor(this.frame ?? (this.frame = this.frameBudget.begin(now)), chosen.priority);
+        if (frameDeadline > 0) chosen.deadline = chosen.deadline > 0 ? Math.min(chosen.deadline, frameDeadline) : frameDeadline;
       }
     }
+    return chosen;
+  }
+
+  pickByPriority(governor, now, preferredLane = null) {
+    let best = -1;
+    let chosen = null;
+    let chosenKey = null;
+    const lanes = governor && preferredLane == null ? new Set(this.tasks.map((task) => task.priority)) : null;
+    for (let index = 0; index < this.tasks.length; index += 1) {
+      const candidate = this.tasks[index];
+      if (candidate.token?.canceled) { this.tasks.splice(index, 1); index -= 1; continue; }
+      if (preferredLane != null && candidate.priority !== preferredLane) continue;
+      // 车道配额：连跑超片数的车道先让位（还有其它车道在等时）。
+      if (governor && preferredLane == null && !governor.canRun(candidate.priority, lanes)) continue;
+      const effective = governor ? governor.effectivePriority(candidate, now) : candidate.priority;
+      const keyDeadline = candidate.deadline === 0 ? Number.POSITIVE_INFINITY : candidate.deadline;
+      if (!chosen
+        || effective < chosenKey[0]
+        || (effective === chosenKey[0] && keyDeadline < chosenKey[1])
+        || (effective === chosenKey[0] && keyDeadline === chosenKey[1] && candidate.seq < chosenKey[2])) {
+        best = index;
+        chosen = candidate;
+        chosenKey = [effective, keyDeadline, candidate.seq];
+      }
+    }
+    if (!chosen) return null;
     this.tasks.splice(best, 1);
     return chosen;
   }
@@ -1776,10 +2032,14 @@ class Scheduler {
   flush() {
     if (this.flushing || !this.runtime || this.runtime.destroyed) return;
     this.flushing = true;
+    // 0.6.1：一次 flush 视为一帧——预算从这里开始算，帧末统一提交 DOM。
+    if (this.frameBudget?.enabled && !this.frame) this.frame = this.frameBudget.begin();
     try {
       this.drain();
     } finally {
       this.flushing = false;
+      this.frame = null;
+      this.runtime.commitDom?.();
     }
   }
 
@@ -1842,6 +2102,12 @@ class Scheduler {
 
   runTask(task) {
     const runtime = this.runtime;
+    // 0.6.1：已取消的任务不执行——组件没了，后台不许再动。
+    if (task.token?.canceled || runtime.destroyed) {
+      if (task.token) runtime.cancellation?.settle(task.token);
+      task.settle?.(new JLCRuntimeError(`任务“${task.label}”已被取消`), null);
+      return undefined;
+    }
     const previous = this.current;
     this.current = task;
     runtime.counters.tasks += 1;
@@ -1860,6 +2126,9 @@ class Scheduler {
       runtime.handleFault(error, { phase: "task", task });
       task.settle?.(error, null);
       return undefined;
+    } finally {
+      // 非挂起收尾：释放取消令牌（挂起续跑会沿用原令牌）。
+      if (!runtime.machine?.suspended && task.token) runtime.cancellation?.settle(task.token);
     }
   }
 
@@ -1883,6 +2152,9 @@ class Scheduler {
       deadline: info.deadline ?? parent?.deadline ?? 0,
       sliceable: true,
       resumed: true,
+      // 续跑与原任务共享取消令牌：取消父任务 = 取消整条续跑链。
+      token: parent?.token ?? null,
+      scope: parent?.scope ?? null,
       run: () => machine.resumeSuspended(),
       then: then ? (value, _error, self) => then(value, null, self) : null,
       settle: parent?.settle ?? null,
@@ -1891,13 +2163,67 @@ class Scheduler {
     return task;
   }
 
+  /* ---- 0.6.1 Cancellation Kernel 的调度器侧 ---- */
+
+  /** 按 id / label 取消排队中的任务；返回取消数。 */
+  cancelTask(query) {
+    let count = 0;
+    this.tasks = this.tasks.filter((task) => {
+      const match = typeof query === "number"
+        ? task.id === query
+        : typeof query === "string"
+          ? task.label === query || String(task.id) === query
+          : typeof query === "function" ? query(task) : false;
+      if (!match) return true;
+      task.token?.cancel("host cancel");
+      runtime_settleCanceled(this.runtime, task);
+      count += 1;
+      return false;
+    });
+    if (this.runtime?.counters) this.runtime.counters.cancels += count;
+    return count;
+  }
+
+  /** scope 销毁：撤掉它名下所有排队任务。 */
+  cancelScope(scope) {
+    if (!scope) return 0;
+    return this.cancelTask((task) => task.scope === scope);
+  }
+
+  /** 车道视图：每个通道的运行 / 强制让出 / 当前连击（Profile 2.0 用）。 */
+  laneStats() {
+    const pending = new Map();
+    for (const task of this.tasks) pending.set(task.priority, (pending.get(task.priority) ?? 0) + 1);
+    return Object.freeze({
+      pending: Object.freeze(Object.fromEntries(pending)),
+      queuedEffects: this.queue.size,
+      governor: this.governor?.stats() ?? null,
+      frameBudget: this.frameBudget?.stats() ?? null,
+    });
+  }
+
   clear() {
     for (const effect of this.queue) effect.queued = false;
     this.queue.clear();
+    for (const task of this.tasks) {
+      if (task.token) this.runtime?.cancellation?.settle(task.token);
+      // 卸载语义：未跑完的任务静默了结（resolve），避免宿主挂起或出现未处理拒绝。
+      task.settle?.(null, null);
+    }
     this.tasks.length = 0;
     this.current = null;
     this.runtime = null;
   }
+}
+
+/** 取消排队任务时同步兑现它的 deferred（宿主不会永远等下去：以取消值了结）。 */
+function runtime_settleCanceled(runtime, task) {
+  try {
+    task.settle?.(null, null);
+  } catch {
+    // settle 异常不影响其余取消
+  }
+  runtime?.cancellation?.settle(task.token);
 }
 
 /* ================================================================
@@ -3520,16 +3846,16 @@ function setNormalAttribute(element, rawName, value, runtime = null, scope = nul
   }
   if (name === "class") value = normalizeClass(value);
 
+  // 0.6.1：属性面写操作统一走 DOM 事务（未开启时直写，语义与 0.6 一致）。
   if (value == null || value === false) {
-    element.removeAttribute(name);
+    domRemoveAttribute(runtime, element, name);
     if (["value", "checked", "selected", "disabled"].includes(name) && name in element) {
-      element[name] = name === "value" ? "" : false;
+      domWriteProperty(runtime, element, name, name === "value" ? "" : false);
     }
     return;
   }
-  if (value === true) element.setAttribute(name, "");
-  else element.setAttribute(name, String(value));
-  if (["value", "checked", "selected"].includes(name) && name in element) element[name] = value;
+  domWriteAttribute(runtime, element, name, value);
+  if (["value", "checked", "selected"].includes(name) && name in element) domWriteProperty(runtime, element, name, value);
 }
 
 function eventSnapshot(event) {
@@ -3590,11 +3916,16 @@ function registerOwnedNode(runtime, scope, node) {
   if (limit > 0 && nodes > limit) {
     throw new JLCQuotaError(`受管 DOM 节点数 ${nodes} 超过配额 maxDomNodes=${limit}（实例被拒绝继续创建节点）`);
   }
+  // 0.6.1：soft 限额走资源内核统一记账（越过 80% 发警告；hard 由上面的检查兜底）。
+  runtime.resources?.reserve("dom");
   runtime.ownedNodes.set(node, scope);
   runtime.metrics.nodes = nodes;
+  // 0.6.1 Profile 2.0：DOM 生命周期记账（create / remove）。
+  runtime.dom?.noteCreate(1);
   scope.own(() => {
     runtime.ownedNodes?.delete(node);
     if (runtime.metrics) runtime.metrics.nodes -= 1;
+    runtime.dom?.noteRemove(1);
   });
 }
 
@@ -3813,6 +4144,8 @@ class Machine {
     this.suspended = null;      // 挂起现场（frames / stack / context / render / ip）
     this.entryFrame = null;
     this.baseFrames = 0;
+    // ---- 0.6.1 Hot Path Cache：全局查找 / 函数元数据固化（链接后不变） ----
+    this.hotCache = new HotPathCache(module);
   }
 
   /** 进入可切片窗口（由 Runtime.perform 驱动）：窗口内最外层 dispatch 可以让出。 */
@@ -3883,11 +4216,27 @@ class Machine {
   link(bindings, links) {
     this.bindings = bindings;
     this.links = links;
+    // 链接完成后全局表不再增删：name → binding 可以固化为 slot 直达。
+    this.hotCache.invalidate();
+  }
+
+  /** 0.6.1 Global Lookup Cache：ref → binding 一级直达（miss 才回源）。 */
+  bindingAt(ref) {
+    const cached = this.hotCache.global(ref);
+    if (cached) return cached;
+    return this.hotCache.putGlobal(ref, this.bindings[this.links[ref]]);
+  }
+
+  /** 0.6.1 Hot Function Cache：funcIndex → 函数元数据直达。 */
+  functionAt(funcIndex) {
+    const cached = this.hotCache.func(funcIndex);
+    if (cached) return cached;
+    return this.hotCache.putFunc(funcIndex, this.functions[funcIndex]);
   }
 
   /** 入口：执行一个函数直到它返回（可重入）。 */
   runFunction(funcIndex, parent, scope, options = {}) {
-    const func = this.functions[funcIndex];
+    const func = this.functionAt(funcIndex);
     const slots = options.preset && options.preset.length >= func.nSlots
       ? options.preset
       : new Array(func.nSlots).fill(null);
@@ -4119,7 +4468,7 @@ class Machine {
               break;
             }
             case OP.GET_GLOBAL: {
-              const binding = this.bindings[this.links[(code[ip] << 8) | code[ip + 1]]];
+              const binding = this.bindingAt((code[ip] << 8) | code[ip + 1]);
               ip += 2;
               stack.push(binding.kind === "signal" ? binding.signal.get() : binding.value);
               break;
@@ -4145,7 +4494,7 @@ class Machine {
             case OP.SET_GLOBAL: {
               const ref = (code[ip] << 8) | code[ip + 1];
               ip += 2;
-              const binding = this.bindings[this.links[ref]];
+              const binding = this.bindingAt(ref);
               const value = sanitizeValue(stack.pop());
               if (binding.kind !== "signal") throw new JLCRuntimeError(`“${this.module.globalRefs[ref]}”不可赋值`);
               if (!binding.signal.writable) throw new JLCRuntimeError(`“${this.module.globalRefs[ref]}”是只读状态`);
@@ -4157,7 +4506,7 @@ class Machine {
               const ref = (code[ip] << 8) | code[ip + 1];
               const count = code[ip + 2];
               ip += 3;
-              const binding = this.bindings[this.links[ref]];
+              const binding = this.bindingAt(ref);
               const keys = [];
               for (let index = 0; index < count; index += 1) keys.push(safeKey(stack.pop()));
               keys.reverse();
@@ -4335,6 +4684,56 @@ class Machine {
   }
 }
 
+/* ================================================================
+ * 0.6.1 DOM Transaction Kernel 写路径
+ *
+ * 所有「属性面」写操作（text / attribute / class / style / property）
+ * 统一走这里：开启事务时先进 Mutation Buffer（批内 coalescing），帧末
+ * 一次提交；未开启时保持 0.6 的直写语义。结构面（insert/move/remove）
+ * 即时落盘——兄弟链是锚点语义，不能缓冲——但照样记账。
+ * ================================================================ */
+
+function domWriteText(runtime, node, value) {
+  if (runtime?.dom?.enabled && !runtime.destroyed) { runtime.dom.setText(node, value); return; }
+  node.data = value;
+}
+
+function domWriteAttribute(runtime, element, name, value) {
+  if (runtime?.dom?.enabled && !runtime.destroyed) { runtime.dom.setAttribute(element, name, value); return; }
+  if (value === true) element.setAttribute(name, "");
+  else element.setAttribute(name, String(value));
+}
+
+function domRemoveAttribute(runtime, element, name) {
+  if (runtime?.dom?.enabled && !runtime.destroyed) { runtime.dom.removeAttribute(element, name); return; }
+  element.removeAttribute(name);
+}
+
+function domWriteProperty(runtime, element, property, value) {
+  if (runtime?.dom?.enabled && !runtime.destroyed) { runtime.dom.setProperty(element, property, value); return; }
+  element[property] = value;
+}
+
+function domToggleClass(runtime, element, name, force) {
+  if (runtime?.dom?.enabled && !runtime.destroyed) { runtime.dom.toggleClass(element, name, force); return; }
+  element.classList.toggle(name, Boolean(force));
+}
+
+function domWriteStyle(runtime, element, property, value) {
+  if (runtime?.dom?.enabled && !runtime.destroyed) {
+    if (value == null) runtime.dom.removeStyleProperty(element, property);
+    else runtime.dom.setStyleProperty(element, property, value);
+    return;
+  }
+  if (value == null) element.style.removeProperty(property);
+  else element.style.setProperty(property, String(value));
+}
+
+function domWriteCssText(runtime, element, text) {
+  if (runtime?.dom?.enabled && !runtime.destroyed) { runtime.dom.setCssText(element, text); return; }
+  element.style.cssText = text;
+}
+
 /** DOM / 视图指令处理器：ELEM、ATTR、TEXT、WHEN、EACH …… */
 const DOM_OPS = {
   [OP.ELEM](machine, code, ip, _frame, _context) {
@@ -4376,7 +4775,8 @@ const DOM_OPS = {
     registerOwnedNode(runtime, textScope, text);
     insertInto(runtime, cursor.parent, text, cursor.before);
     runtime.effect(textScope, () => {
-      text.data = toText(machine.runFunction(funcIndex, frame, textScope));
+      // 0.6.1：text 写走 DOM 事务（同一帧内重复写只落最后一次）。
+      domWriteText(runtime, text, toText(machine.runFunction(funcIndex, frame, textScope)));
     });
     return ip;
   },
@@ -4408,7 +4808,8 @@ const DOM_OPS = {
     ip += 4;
     const element = cursor.parent;
     const scope = cursor.scope;
-    machine.runtime.effect(scope, () => element.classList.toggle(className, Boolean(machine.runFunction(funcIndex, frame, scope))), 2);
+    const runtime = machine.runtime;
+    runtime.effect(scope, () => domToggleClass(runtime, element, className, Boolean(machine.runFunction(funcIndex, frame, scope))), 2);
     return ip;
   },
   [OP.STYLE_PROP](machine, code, ip, frame) {
@@ -4419,10 +4820,10 @@ const DOM_OPS = {
     ip += 4;
     const element = cursor.parent;
     const scope = cursor.scope;
-    machine.runtime.effect(scope, () => {
+    const runtime = machine.runtime;
+    runtime.effect(scope, () => {
       const value = machine.runFunction(funcIndex, frame, scope);
-      if (value == null || value === false) element.style.removeProperty(property);
-      else element.style.setProperty(property, String(value));
+      domWriteStyle(runtime, element, property, value == null || value === false ? null : String(value));
     }, 2);
     return ip;
   },
@@ -4444,7 +4845,7 @@ const DOM_OPS = {
       if (propertyDenied) return;
       let value = machine.runFunction(funcIndex, frame, scope);
       if (URL_ATTRIBUTES.has(normalized)) value = sanitizeUrl(value, runtime.policy);
-      element[property] = value;
+      domWriteProperty(runtime, element, property, value);
     });
     return ip;
   },
@@ -4455,22 +4856,22 @@ const DOM_OPS = {
     ip += 2;
     const element = cursor.parent;
     const scope = cursor.scope;
+    const runtime = machine.runtime;
     let previous = new Set();
-    machine.runtime.effect(scope, () => {
+    runtime.effect(scope, () => {
       const value = machine.runFunction(funcIndex, frame, scope);
       if (ownData(value) && !Array.isArray(value)) {
         const next = new Set();
         for (const [property, child] of Object.entries(value)) {
           next.add(property);
-          if (child == null || child === false) element.style.removeProperty(property);
-          else element.style.setProperty(property, String(child));
+          domWriteStyle(runtime, element, property, child == null || child === false ? null : String(child));
         }
-        for (const property of previous) if (!next.has(property)) element.style.removeProperty(property);
+        for (const property of previous) if (!next.has(property)) domWriteStyle(runtime, element, property, null);
         previous = next;
       } else {
-        for (const property of previous) element.style.removeProperty(property);
+        for (const property of previous) domWriteStyle(runtime, element, property, null);
         previous.clear();
-        element.style.cssText = value == null ? "" : String(value);
+        domWriteCssText(runtime, element, value == null ? "" : String(value));
       }
     });
     return ip;
@@ -4507,6 +4908,7 @@ const DOM_OPS = {
       if (modifiers & 2) event.stopPropagation();
       const eventFrame = { slots: [eventSnapshot(event)], parent: frame };
       const eventRuntime = machine.runtime;
+      eventRuntime.activity += 1; // 泄漏探测：用户输入 = 活动信号
       const eventContext = eventRuntime.context(scope);
       try {
         // 0.6：事件处理器跑在 INPUT 通道上——用户输入永远抢在后台计算前面。
@@ -4618,17 +5020,23 @@ const DOM_OPS = {
       const deadline = slicing ? Date.now() + Math.max(1, runtime.options.frameBudgetMs || 6) : 0;
       let chunkLeft = slicing || 0;
       const nextRecords = new Map();
+      // 0.6.1 Keyed Node Cache：key 再次出现 → 直接复用（scope/DOM/binding 全在），
+      // 10000 items 改 1 item 时，其余 9999 项全部命中复用，不重建。
+      const cache = runtime.nodeCache;
+      const cacheOwner = cache ? controlScope : null;
       for (let index = 0; index < values.length; index += 1) {
         const key = keys[index];
         let record = records.get(key);
         if (record) {
           record.item.set(values[index], true);
           record.index?.set(index, true);
+          cache?.hit(cacheOwner, key);
         } else {
+          cache?.miss(cacheOwner, key);
           const recordScope = controlScope.child(`each:${toText(key)}`);
           const item = new Signal(runtime, values[index], false, itemName);
           const indexSignal = hasIndex ? new Signal(runtime, index, false, "index") : null;
-          const bodyPreset = new Array(machine.functions[bodyFunc].nSlots).fill(null);
+          const bodyPreset = new Array(machine.functionAt(bodyFunc).nSlots).fill(null);
           bodyPreset[0] = item;
           if (hasIndex) bodyPreset[1] = indexSignal;
           const recordStart = runtime.document.createComment("jlc:item");
@@ -4654,19 +5062,27 @@ const DOM_OPS = {
 
       for (const [key, record] of records) {
         if (!nextRecords.has(key)) {
+          cache?.release(cacheOwner, key);
           record.scope.dispose();
           record.item.detach();
           record.index?.detach();
           removeInclusive(record.start, record.end);
+          runtime.dom?.noteRemove(2);
         }
       }
       records = nextRecords;
 
+      // Diff Engine 2：只搬需要搬的。moveInclusive 对「已在目标位置」的区段
+      // 直接短路，因此有序列表的原位更新是零搬运。
       let anchor = end;
       const ordered = [...records.values()];
       for (let index = ordered.length - 1; index >= 0; index -= 1) {
-        moveInclusive(parent, ordered[index].start, ordered[index].end, anchor);
-        anchor = ordered[index].start;
+        const record = ordered[index];
+        if (record.end.nextSibling !== anchor) {
+          moveInclusive(parent, record.start, record.end, anchor);
+          runtime.dom?.noteMove(1);
+        }
+        anchor = record.start;
       }
 
       if (values.length === 0 && !emptyRecord) {
@@ -4686,6 +5102,7 @@ const DOM_OPS = {
     // 组件级重启（fault: "restart"）：把列表项全部作废并原地重建。
     // 单项崩溃时 runtime.restartScope 只销毁那一项的 scope，然后让 owner 重放。
     const rebuildItems = () => {
+      runtime.nodeCache?.releaseOwner(controlScope);
       for (const record of records.values()) {
         record.scope.dispose();
         record.item.detach();
@@ -4724,7 +5141,7 @@ function installBind(machine, code, ip, frame, checked) {
   runtime.effect(scope, () => {
     const value = machine.runFunction(getFunc, frame, scope);
     const normalized = checked ? Boolean(value) : value ?? "";
-    if (!Object.is(element[property], normalized)) element[property] = normalized;
+    if (!Object.is(element[property], normalized)) domWriteProperty(runtime, element, property, normalized);
   });
   const eventType = !checked && ["INPUT", "TEXTAREA"].includes(element.tagName) ? "input" : "change";
   runtime.listen(scope, element, eventType, () => {
@@ -4742,6 +5159,46 @@ function installBind(machine, code, ip, frame, checked) {
 /* ================================================================
  * 运行时宿主（Runtime）
  * ================================================================ */
+
+/* ================================================================
+ * 0.6.1 宿主运行档（Runtime Presets）
+ *
+ * runtime: "full" 不是安全绕过——权限 / 能力 / 资源 / 隔离一项不少——
+ * 而是把 0.6 建立的接管能力全部变成默认开启的执行形态：
+ * 调度公平、帧预算、DOM 事务、响应式批、依赖图、增量检查点、
+ * 内存分户、泄漏探测、网络调度、故障自动升级、取消内核。
+ * 显式 options 永远覆盖预设（预设只是默认值）。
+ * ================================================================ */
+
+export const RUNTIME_PRESETS = Object.freeze({
+  legacy: Object.freeze({}),
+  full: Object.freeze({
+    maxSliceSteps: 20_000,
+    frameBudgetMs: 6,
+    renderChunk: 64,
+    sliceCheckInterval: 512,
+    checkpointLimit: 8,
+    fault: "restart",
+    isolation: "strict",
+    domTransaction: true,
+    dependencyGraph: true,
+    checkpointDelta: true,
+    memoryAccounting: true,
+    leakDetector: true,
+    networkScheduling: true,
+    faultEscalation: true,
+    scheduler: Object.freeze({ maxConsecutiveSlices: 3, agingMs: 32, starvationMs: 96 }),
+    resources: Object.freeze({ workers: 4, checkpoints: 8 }),
+  }),
+});
+
+/** 解析 runtime 档：未知档位报错（静默忽略会把配置错误变成性能玄学）。 */
+export function resolveRuntimePreset(name) {
+  if (name == null || name === false) return RUNTIME_PRESETS.legacy;
+  const preset = RUNTIME_PRESETS[name];
+  if (!preset) throw new JLCRuntimeError(`未知 runtime 档“${name}”：可用 ${Object.keys(RUNTIME_PRESETS).join(" / ")}`);
+  return preset;
+}
 
 function createRouteSnapshot(windowObject) {
   if (!windowObject?.location) return Object.freeze({ path: "/", query: Object.freeze(Object.create(null)), hash: "", state: null });
@@ -4946,11 +5403,15 @@ function createBuiltins(runtime) {
 }
 
 class Runtime {
-  constructor(kernel, target, options, contextOptions = {}) {
+  constructor(kernel, target, rawOptions, contextOptions = {}) {
     this.kernel = kernel;
     this.target = target;
     this.document = target.ownerDocument ?? globalThis.document;
     this.window = this.document?.defaultView ?? globalThis.window;
+    // 0.6.1：runtime 档只补默认值——宿主显式写的每一项都优先。
+    const preset = resolveRuntimePreset(rawOptions.runtime ?? kernel.options.runtime);
+    this.runtimePreset = rawOptions.runtime ?? null;
+    const options = { ...preset, ...rawOptions };
     this.options = {
       maxSteps: options.maxSteps ?? kernel.options.maxSteps,
       maxLoop: options.maxLoop ?? kernel.options.maxLoop,
@@ -4962,6 +5423,10 @@ class Runtime {
       sliceHostCalls: options.sliceHostCalls ?? kernel.options.sliceHostCalls ?? true,
       renderChunk: Math.max(0, Math.floor(Number(options.renderChunk ?? kernel.options.renderChunk ?? 128) || 0)),
       sliceCheckInterval: Math.max(64, Math.floor(Number(options.sliceCheckInterval ?? kernel.options.sliceCheckInterval ?? 512) || 512)),
+      // ---- 0.6.1 网络调度：resource 请求经 P5 NETWORK 车道进调度器 ----
+      networkScheduling: Boolean(options.networkScheduling ?? kernel.options.networkScheduling ?? false),
+      networkTimeoutMs: Math.max(0, Math.floor(Number(options.networkTimeoutMs ?? kernel.options.networkTimeoutMs ?? 0) || 0)),
+      networkRetries: Math.max(0, Math.floor(Number(options.networkRetries ?? kernel.options.networkRetries ?? 0) || 0)),
     };
     // ---- 策略 / 隔离 / 配额（0.3 的“管理面”） ----
     this.policy = resolvePolicy(options.policy ?? contextOptions.policy ?? kernel.options.policy ?? "strict");
@@ -4990,6 +5455,34 @@ class Runtime {
     this.batchDepth = 0;
     this.destroyed = false;
     this.initializing = true;
+    // ---- 0.6.1 Performance Kernel 子系统（按依赖顺序实例化） ----
+    this.activity = 0; // 用户侧动作计数（事件 / set / call），泄漏探测的「忙碌信号」
+    this.effectRegistry = options.dependencyGraph !== false ? new Set() : null;
+    this.cancellation = new CancellationRegistry();
+    this.frameBudget = new FrameBudgetManager({ frameBudgetMs: options.frameBudgetMs ?? 0 });
+    const schedulerOptions = options.scheduler && typeof options.scheduler === "object" ? options.scheduler : {};
+    const laneQuotas = schedulerOptions.laneQuotas ?? schedulerOptions.quotas ?? null;
+    this.options.schedulerGovernor = new LaneGovernor({
+      quotas: laneQuotas,
+      defaultQuota: schedulerOptions.maxConsecutiveSlices ?? 8,
+      agingMs: schedulerOptions.agingMs ?? 32,
+      maxAgingSteps: schedulerOptions.maxAgingSteps ?? 2,
+      starvationMs: schedulerOptions.starvationMs ?? 96,
+    });
+    this.dom = new DomTransaction({ enabled: Boolean(options.domTransaction ?? preset.domTransaction ?? false) });
+    this.nodeCache = new KeyedNodeCache({ maxSize: options.nodeCacheSize ?? 8192 });
+    this.memoryAccountant = options.memoryAccounting ? new MemoryAccountant({ limit: options.memoryLimitKB ?? 0 }) : null;
+    this.leakDetector = options.leakDetector
+      ? new LeakDetector({
+          intervalMs: typeof options.leakDetector === "object" ? options.leakDetector.intervalMs ?? 10_000 : 10_000,
+          threshold: typeof options.leakDetector === "object" ? options.leakDetector.threshold ?? 64 : 64,
+          onWarn: (info) => {
+            this.counters && (this.counters.leakWarnings += 1);
+            this.onWarn?.(info);
+          },
+        })
+      : null;
+    this.faultEscalation = options.faultEscalation ?? preset.faultEscalation ?? true;
     this.scheduler = new Scheduler(this);
     // ---- 0.6 内核子系统实例 ----
     const policyGrants = this.policy.capabilities ?? null;
@@ -5001,17 +5494,30 @@ class Runtime {
       audit: typeof this.policy.audit === "function" ? (event) => notePolicy(this, { action: "capability", ...event }) : null,
       now: options.now ?? null,
     });
+    // 0.6.1：宿主显式写的 resources.dom（含 soft/hard 对象）优先于策略档的
+    // maxDomNodes 默认值；未显式配置时仍按 0.6 语义从策略同步。
+    const explicitResources = options.resources ?? null;
     this.resources = new ResourceKernel(this, {
       ...(this.policy.resources ?? null),
-      ...(options.resources ?? null),
-      ...(this.policy.maxDomNodes ? { dom: this.policy.maxDomNodes } : null),
+      ...(explicitResources ?? null),
+      ...(this.policy.maxDomNodes && !explicitResources?.dom ? { dom: this.policy.maxDomNodes } : null),
     });
-    this.checkpoints = new CheckpointStore(this, { limit: options.checkpointLimit ?? kernel.options.checkpointLimit ?? 8 });
+    this.checkpoints = new CheckpointStore(this, {
+      limit: options.checkpointLimit ?? kernel.options.checkpointLimit ?? 8,
+      // 0.6.1 Checkpoint 2.0：delta 快照（结构共享），不再每次整份复制 state。
+      delta: Boolean(options.checkpointDelta ?? preset.checkpointDelta ?? false),
+    });
     // ---- 0.6 诊断：默认零开销，只有 debug / profile 打开时才逐指令记账 ----
     this.profiling = Boolean(options.profile ?? options.debug ?? kernel.options.profile ?? kernel.options.debug ?? false);
     this.profileFunctions = new Map();
     this.domMutations = 0;
-    this.counters = { tasks: 0, yields: 0, budgets: 0, renderSlices: 0, restarts: 0, rollbacks: 0, faults: 0 };
+    this.onWarn = options.onWarn ?? kernel.options.onWarn ?? null;
+    // 0.6.1 计数器扩展（旧字段一个不少，新增公平 / 事务 / 缓存 / 取消等维度）。
+    this.counters = {
+      tasks: 0, yields: 0, budgets: 0, renderSlices: 0, restarts: 0, rollbacks: 0, faults: 0,
+      warnings: 0, cancels: 0, escalations: 0, effectDeduped: 0, transactions: 0,
+      leakWarnings: 0, networkScheduled: 0,
+    };
     this.capabilityPaths = Object.freeze({ ...(options.capabilityPaths ?? null) });
     // 【0.4.1 统一 Tick Wheel 调度】收归 every / after 独立闭包，合并微任务派发，杜绝高频掉帧
     this.timerTasks = new Set();
@@ -5051,19 +5557,32 @@ class Runtime {
 
   batch(callback) {
     this.batchDepth += 1;
+    if (this.batchDepth === 1) {
+      // Reactive Batch 2.0：一批 state 变更 = 一个事务号 → 一次推导 → 一次渲染。
+      this.counters.transactions += 1;
+      this.scheduler.transactionSerial += 1;
+    }
     try {
       return callback();
     } finally {
       this.batchDepth -= 1;
-      if (this.batchDepth === 0 && this.scheduler.queue.size && !this.scheduler.pending) {
-        this.scheduler.pending = true;
-        queueMicrotask(() => {
-          if (!this.scheduler) return;
-          this.scheduler.pending = false;
-          this.scheduler.flush();
-        });
+      if (this.batchDepth === 0) {
+        this.commitDom(); // 批内同步写（如首屏）在这里兜底提交
+        if (this.scheduler.queue.size && !this.scheduler.pending) {
+          this.scheduler.pending = true;
+          queueMicrotask(() => {
+            if (!this.scheduler) return;
+            this.scheduler.pending = false;
+            this.scheduler.flush();
+          });
+        }
       }
     }
+  }
+
+  /** 0.6.1 DOM Transaction：统一提交点（perform / flush / batch 结束）。 */
+  commitDom() {
+    if (this.dom?.hasPending && !this.destroyed) this.dom.commit();
   }
 
   /** 纯通知通道：onError → 宿主；不参与故障决策（0.4 语义保留）。 */
@@ -5112,38 +5631,67 @@ class Runtime {
     return requested;
   }
 
+  /** 单级故障动作：成功返回 true，失败（如连续重启超限 / 无检查点）返回 false。 */
+  applyFaultLevel(level, normalized, context) {
+    switch (level) {
+      case "ignore":
+        return true;
+      case "stop":
+        this.notifyFault(normalized, level);
+        this.unmountSelf?.();
+        return true;
+      case "rollback": {
+        const entry = this.rollback();
+        if (entry) {
+          this.counters.rollbacks += 1;
+          this.notifyFault(normalized, level);
+          return true;
+        }
+        return false;
+      }
+      case "restart": {
+        if (context.scope && this.restartScope(context.scope)) {
+          this.counters.restarts += 1;
+          this.notifyFault(normalized, level);
+          return true;
+        }
+        return false;
+      }
+      case "degrade":
+        this.notifyFault(normalized, level);
+        return true;
+      default: { // recover
+        if (normalized.isPolicyError && this.notifyFault(normalized, level)) return true;
+        this.reportError(normalized);
+        return true;
+      }
+    }
+  }
+
+  /**
+   * 0.6 故障阶梯 + 0.6.1 自动升级：
+   * restart 连炸 3 次 → rollback → 仍失败 → degrade；内核不变量违规直接 stop。
+   * `faultEscalation: false` 可以退回 0.6 的单级语义。
+   */
   handleFault(error, context = {}) {
     const normalized = error instanceof Error ? error : new JLCRuntimeError(String(error));
     if (isYieldSignal(normalized)) throw normalized;
-    const level = this.faultLevelFor(normalized, context);
+    let level = this.faultLevelFor(normalized, context);
     this.counters.faults += 1;
     if (normalized.isPolicyError || level === "stop") this.metrics.faults += 1;
-    if (level === "ignore") return "ignore";
-    if (level === "stop") {
-      this.notifyFault(normalized, level);
-      this.unmountSelf?.();
-      return "stop";
-    }
-    if (level === "rollback") {
-      const entry = this.rollback();
-      if (entry) {
-        this.counters.rollbacks += 1;
-        this.notifyFault(normalized, level);
-        return "rollback";
+    let attempts = 0;
+    while (true) {
+      if (this.applyFaultLevel(level, normalized, context)) return level;
+      const next = this.faultEscalation ? FAULT_ESCALATION[level] : null;
+      if (!next || attempts++ >= 4) {
+        // 升级链用尽：按 0.6 语义上报，结局仍然可观察。
+        if (normalized.isPolicyError && this.notifyFault(normalized, level)) return level;
+        this.reportError(normalized);
+        return level;
       }
+      this.counters.escalations += 1;
+      level = next;
     }
-    if (level === "restart" && this.restartScope(context.scope)) {
-      this.counters.restarts += 1;
-      this.notifyFault(normalized, level);
-      return "restart";
-    }
-    if (level === "degrade") {
-      this.notifyFault(normalized, level);
-      return "degrade";
-    }
-    if (normalized.isPolicyError && this.notifyFault(normalized, level)) return level;
-    this.reportError(normalized);
-    return level;
   }
 
   /** 组件级重启：销毁出错作用域并重放它的视图（错误边界的最小实现）。 */
@@ -5234,7 +5782,11 @@ class Runtime {
     else this.profileFunctions.set(name, { name, count: 1 });
   }
 
-  /** 0.6 只读诊断视图：宿主 IDE / 系统监视器直接渲染。 */
+  /**
+   * 0.6 只读诊断视图 + 0.6.1 Profile 2.0 分区：
+   * CPU / DOM / Scheduler / Yield / Memory / Effects / EACH / Network / Resource。
+   * 旧字段（hot / counters / usage…）一个不少，新内容全部走 `sections`。
+   */
   profile() {
     const total = [...this.profileFunctions.values()].reduce((sum, entry) => sum + entry.count, 0);
     const hot = [...this.profileFunctions.values()]
@@ -5245,19 +5797,74 @@ class Runtime {
         instructions: entry.count,
         share: total > 0 ? entry.count / total : 0,
       }));
+    const counters = this.counters ?? {};
+    const domStats = this.dom?.statsView() ?? null;
+    const laneStats = this.scheduler?.laneStats?.() ?? null;
+    const sections = Object.freeze({
+      cpu: Object.freeze({ instructions: total, hot: Object.freeze(hot) }),
+      dom: Object.freeze({
+        create: domStats?.creates ?? 0,
+        update: domStats?.applied ?? 0,
+        remove: domStats?.removes ?? 0,
+        move: domStats?.moves ?? 0,
+        coalesced: domStats?.coalesced ?? 0,
+        pending: domStats?.pending ?? 0,
+        commits: domStats?.commits ?? 0,
+        live: this.metrics.nodes,
+      }),
+      scheduler: Object.freeze({
+        lanes: laneStats?.governor?.runs ?? Object.freeze({}),
+        forcedYields: laneStats?.governor?.forcedYields ?? Object.freeze({}),
+        agingBoosts: laneStats?.governor?.agingBoosts ?? 0,
+        rescues: laneStats?.governor?.rescues ?? 0,
+        frames: laneStats?.frameBudget?.frames ?? 0,
+        tasks: counters.tasks ?? 0,
+      }),
+      yield: Object.freeze({
+        renderSlices: counters.renderSlices ?? 0,
+        vmYields: counters.yields ?? 0,
+        budgets: counters.budgets ?? 0,
+      }),
+      memory: this.memory(),
+      effects: Object.freeze({
+        live: this.metrics.effects,
+        deduped: counters.effectDeduped ?? 0,
+        transactions: counters.transactions ?? 0,
+        graph: this.effectRegistry ? Object.freeze({ nodes: this.effectRegistry.size }) : null,
+      }),
+      each: this.nodeCache?.stats() ?? Object.freeze({ size: 0, hits: 0, misses: 0, hitRate: 0 }),
+      network: Object.freeze({
+        live: this.metrics.requests,
+        scheduled: counters.networkScheduled ?? 0,
+      }),
+      resource: this.resources?.usage() ?? Object.freeze({}),
+      faults: Object.freeze({
+        faults: counters.faults ?? 0,
+        restarts: counters.restarts ?? 0,
+        rollbacks: counters.rollbacks ?? 0,
+        escalations: counters.escalations ?? 0,
+        warnings: counters.warnings ?? 0,
+        cancels: counters.cancels ?? 0,
+      }),
+      hotCache: this.machine?.hotCache?.statsView() ?? null,
+      leaks: this.leakDetector ? this.leakDetector.report() : null,
+    });
     return Object.freeze({
       app: this.module?.app ?? null,
+      version: VERSION,
+      runtime: this.runtimePreset,
       active: !this.destroyed,
       profiling: this.profiling,
       instructions: total,
       domMutations: this.domMutations,
-      counters: Object.freeze({ ...(this.counters ?? {}) }),
+      counters: Object.freeze({ ...counters }),
       usage: Object.freeze({ ...this.metrics }),
       resources: this.resources?.usage() ?? Object.freeze({}),
       hot: Object.freeze(hot),
       pending: this.scheduler?.pendingTasks?.() ?? Object.freeze([]),
       suspended: Boolean(this.machine?.suspended),
       checkpoints: this.checkpoints?.list() ?? Object.freeze([]),
+      sections,
     });
   }
 
@@ -5327,7 +5934,124 @@ class Runtime {
     } finally {
       if (machine) machine.endSlice(previousSlice);
       this.scheduler.current = previousCurrent;
+      // 0.6.1：每次任务窗口结束都提交 DOM 事务（挂起续跑时同样提交已写部分）。
+      this.commitDom();
     }
+  }
+
+  /* ---- 0.6.1 宿主操作面：取消 / 内存 / 泄漏 / 依赖图 / VM 上下文 ---- */
+
+  /** 取消任务：按 id / label / 谓词。调度器撤队列 + 令牌级联。 */
+  cancelTask(query) {
+    if (this.destroyed) return 0;
+    const scheduled = this.scheduler?.cancelTask(query) ?? 0;
+    const tokens = this.cancellation?.cancel(query, "host cancel") ?? 0;
+    // 令牌里可能包含不在调度器队列里的单元（如挂起续跑链）
+    if (tokens > 0 && this.machine?.suspended && !scheduled) {
+      this.machine.suspended = null; // 续跑链已随令牌取消
+    }
+    return Math.max(scheduled, tokens);
+  }
+
+  /** scope 销毁级联：撤任务 + 撤令牌（定时器 / 监听器随 scope.own 已释放）。 */
+  cancelScope(scope) {
+    if (this.destroyed) return;
+    this.scheduler?.cancelScope(scope);
+    this.cancellation?.cancelScope(scope, "scope disposed");
+    this.nodeCache?.releaseOwner(scope);
+  }
+
+  /** Memory Accountant 视图（分户账：state / checkpoint / task / cache…）。 */
+  memory() {
+    if (this.memoryAccountant && !this.destroyed) {
+      // state 户按当前信号值实时折算；任务 / 缓存户按条目权重折算。
+      let stateBytes = 0;
+      for (const [name, slot] of this.globals?.names ?? []) {
+        const binding = this.globals.bindings[slot];
+        if (binding?.kind === "signal") stateBytes += 16 + name.length * 2 + estimateBytes(binding.signal.value);
+      }
+      this.memoryAccountant.setAccount("state", stateBytes);
+      this.memoryAccountant.setAccount("tasks", (this.scheduler?.taskCount?.() ?? 0) * 256);
+      this.memoryAccountant.setAccount("cache", (this.nodeCache?.size?.() ?? 0) * 96 + (this.machine?.hotCache ? 64 * this.machine.hotCache.globalSlots.length : 0));
+    }
+    const view = this.memoryAccountant?.usage() ?? Object.freeze({ totalBytes: 0, totalKB: 0, limitBytes: 0, accounts: Object.freeze({}) });
+    return Object.freeze({
+      ...view,
+      checkpointsBytes: this.checkpoints?.bytes ?? 0,
+      nodeCache: this.nodeCache?.stats() ?? null,
+    });
+  }
+
+  /** 泄漏探测报告（样本 + 可疑项）。 */
+  leaks() {
+    if (!this.leakDetector) return Object.freeze({ enabled: false, suspected: Object.freeze([]), samples: Object.freeze([]) });
+    return Object.freeze({ enabled: true, ...this.leakDetector.report() });
+  }
+
+  /** 给泄漏探测器采样用的当前计数快照。 */
+  leakSnapshot() {
+    return {
+      scopes: this.metrics.scopes,
+      effects: this.metrics.effects,
+      listeners: this.metrics.listeners,
+      timers: this.metrics.timers,
+      requests: this.metrics.requests,
+      tasks: this.scheduler?.taskCount?.() ?? 0,
+      nodes: this.metrics.nodes,
+      activity: this.activity,
+    };
+  }
+
+  /** 0.6.1 Effect Dependency Graph：整图导出（只读）。 */
+  dependencyGraph() {
+    return describeDependencyGraph(this);
+  }
+
+  /** 改某个状态会牵动哪些 effect（沿派生状态传导的间接依赖也在内）。 */
+  dependents(name) {
+    return dependentsOf(this, name);
+  }
+
+  /**
+   * 0.6.1 VM Execution Context：任何执行中的行为都能回答
+   * 「我是谁、我在哪、我有什么权限、用了多少资源、属于哪个任务、出了错怎么恢复」。
+   */
+  vmContext() {
+    return Object.freeze({
+      module: Object.freeze({ app: this.module?.app ?? null, abi: ABI_VERSION, bytecodeVersion: this.module?.version ?? null }),
+      machine: Object.freeze({
+        frames: this.machine?.frames?.length ?? 0,
+        stack: this.machine?.stack?.length ?? 0,
+        suspended: Boolean(this.machine?.suspended),
+        hotCache: this.machine?.hotCache?.statsView() ?? null,
+      }),
+      scope: Object.freeze({ label: this.rootScope?.label ?? null, scopes: this.metrics.scopes }),
+      state: Object.freeze(this.stateNames()),
+      permissions: Object.freeze({
+        mode: this.policy.profile,
+        capabilities: this.permissions?.list?.().length ?? 0,
+      }),
+      resources: this.resources?.usage() ?? Object.freeze({}),
+      scheduler: Object.freeze({
+        currentTask: this.scheduler?.current ? Object.freeze({ id: this.scheduler.current.id, label: this.scheduler.current.label, lane: this.scheduler.current.priority }) : null,
+        pending: this.scheduler?.pendingTasks?.() ?? Object.freeze([]),
+        lanes: this.scheduler?.laneStats?.() ?? null,
+      }),
+      checkpoint: Object.freeze({ entries: this.checkpoints?.list() ?? Object.freeze([]), delta: Boolean(this.checkpoints?.delta) }),
+      fault: Object.freeze({ mode: this.faultMode, escalation: Boolean(this.faultEscalation), counters: Object.freeze({ ...this.counters }) }),
+      profiler: Object.freeze({ enabled: this.profiling, instructions: [...(this.profileFunctions?.values?.() ?? [])].reduce((sum, entry) => sum + entry.count, 0) }),
+      domTransaction: this.dom?.statsView() ?? null,
+      cancellation: this.cancellation?.stats() ?? null,
+    });
+  }
+
+  stateNames() {
+    const names = [];
+    for (const [name, slot] of this.globals?.names ?? []) {
+      const binding = this.globals.bindings[slot];
+      if (binding?.kind === "signal") names.push(name);
+    }
+    return names;
   }
 
   /** 策略说明 + 指纹：宿主 UI 直接可读，不必自己拼。 */
@@ -5536,6 +6260,11 @@ class Runtime {
       else clearTimeout(this.activeTickHandle);
       this.activeTickHandle = null;
     }
+    // 0.6.1：卸载 = 全量取消 + 停采样 + 丢弃未提交 DOM 写。
+    this.leakDetector?.stop();
+    this.cancellation?.clear();
+    this.dom?.discard();
+    this.nodeCache?.clear();
     this.timerTasks?.clear();
     this.timerTasks = null;
     this.rootScope?.dispose();
@@ -5566,11 +6295,20 @@ class Runtime {
     this.counters = null;
     this.initialState = null;
     this.onError = null;
+    this.onWarn = null;
     this.options = null;
     this.kernel = null;
     this.ownedNodes?.clear();
     this.ownedNodes = null;
     this.denied = null;
+    this.effectRegistry?.clear();
+    this.effectRegistry = null;
+    this.cancellation = null;
+    this.dom = null;
+    this.nodeCache = null;
+    this.memoryAccountant = null;
+    this.leakDetector = null;
+    this.frameBudget = null;
     this.target = null;
     this.document = null;
     this.window = null;
@@ -5754,6 +6492,11 @@ function installResource(runtime, declaration) {
       credentials: requestOptions.credentials ?? "same-origin",
       signal: controller?.signal,
     };
+    // ---- 0.6.1 Network Scheduler：P5 车道 + 超时 + 有限重试 ----
+    const timeoutMs = runtime.options.networkTimeoutMs ?? 0;
+    const maxRetries = runtime.options.networkRetries ?? 0;
+    let attempts = 0;
+    let timeoutHandle = null;
     const fail = (error) => {
       if (!finish() || runtime.destroyed || error?.name === "AbortError") return;
       signal.set(resourceSnapshot(resource, previous?.data ?? null, Object.freeze({
@@ -5761,27 +6504,62 @@ function installResource(runtime, declaration) {
         message: String(error?.message ?? error),
       }), false, null), true);
     };
-    let pending;
-    try {
-      pending = Promise.resolve(runtime.fetch(descriptor.url, fetchOptions));
-    } catch (error) {
-      fail(error);
-      return;
-    }
-    pending.then(async (response) => {
-      let data;
-      const mode = requestOptions.as ?? "auto";
-      if (mode === "text") data = await response.text();
-      else if (mode === "blob") data = await response.blob();
-      else {
-        const type = response.headers?.get?.("content-type") ?? "";
-        data = mode === "json" || type.includes("json") ? await response.json() : await response.text();
+    const fire = () => {
+      if (!active || runtime.destroyed) return;
+      attempts += 1;
+      if (timeoutMs > 0 && controller) {
+        const setTimeoutFn = runtime.window?.setTimeout ?? setTimeout;
+        timeoutHandle = setTimeoutFn(() => { if (active) controller.abort?.(); }, timeoutMs);
       }
-      const safeData = mode === "blob" ? null : sanitizeValue(data);
-      if (!finish() || runtime.destroyed) return;
-      if (response.ok) signal.set(resourceSnapshot(resource, safeData, null, false, response.status), true);
-      else signal.set(resourceSnapshot(resource, safeData, Object.freeze({ message: `HTTP ${response.status}`, status: response.status }), false, response.status), true);
-    }).catch(fail);
+      let pending;
+      try {
+        pending = Promise.resolve(runtime.fetch(descriptor.url, fetchOptions));
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      pending.then(async (response) => {
+        if (timeoutHandle != null) { (runtime.window?.clearTimeout ?? clearTimeout)(timeoutHandle); timeoutHandle = null; }
+        let data;
+        const mode = requestOptions.as ?? "auto";
+        if (mode === "text") data = await response.text();
+        else if (mode === "blob") data = await response.blob();
+        else {
+          const type = response.headers?.get?.("content-type") ?? "";
+          data = mode === "json" || type.includes("json") ? await response.json() : await response.text();
+        }
+        const safeData = mode === "blob" ? null : sanitizeValue(data);
+        if (!finish() || runtime.destroyed) return;
+        if (response.ok) signal.set(resourceSnapshot(resource, safeData, null, false, response.status), true);
+        else signal.set(resourceSnapshot(resource, safeData, Object.freeze({ message: `HTTP ${response.status}`, status: response.status }), false, response.status), true);
+      }).catch((error) => {
+        if (timeoutHandle != null) { (runtime.window?.clearTimeout ?? clearTimeout)(timeoutHandle); timeoutHandle = null; }
+        // 重试只针对传输层失败（非 Abort、非 HTTP 状态），且仍然活着。
+        if (active && !runtime.destroyed && error?.name !== "AbortError" && attempts <= maxRetries) {
+          scheduleNetwork();
+          return;
+        }
+        fail(error);
+      });
+    };
+    const scheduleNetwork = () => {
+      if (runtime.options.networkScheduling && runtime.scheduler && !runtime.destroyed) {
+        // 网络任务进 P5 NETWORK 车道：不挤占 INPUT / RENDER，受资源配额与取消内核管辖。
+        runtime.counters.networkScheduled += 1;
+        runtime.scheduler.submit({
+          kind: "network",
+          label: `net:${declaration.name}`,
+          priority: PRIORITY.NETWORK,
+          run: () => fire(),
+        });
+      } else {
+        fire();
+      }
+    };
+    ACTIVE_EFFECT.onCleanup(() => {
+      if (timeoutHandle != null) { (runtime.window?.clearTimeout ?? clearTimeout)(timeoutHandle); timeoutHandle = null; }
+    });
+    scheduleNetwork();
   }, 1);
 }
 
@@ -6024,6 +6802,7 @@ export class VMKernel {
         if (!active) throw new JLCRuntimeError("应用已卸载");
         const binding = runtime.globals.resolve(name);
         if (binding.kind !== "signal" || !binding.signal.writable) throw new JLCRuntimeError(`“${name}”不是可写状态`);
+        runtime.activity += 1; // 泄漏探测：宿主写状态 = 用户侧活动
         runtime.batch(() => binding.signal.set(sanitizeValue(value)));
         return handle;
       },
@@ -6031,6 +6810,9 @@ export class VMKernel {
         if (!active) throw new JLCRuntimeError("应用已卸载");
         const value = bindingValue(runtime.globals.resolve(name));
         if (!value?.[CALLABLE]) throw new JLCRuntimeError(`“${name}”不是 action`);
+        runtime.activity += 1; // 泄漏探测：宿主调 action = 用户侧活动
+        // 0.6.1 统一管线：capability → permission → resource → scheduler → VM，
+        // host call 不再有绕过调度器的旁路（切片开启时同样可让出续跑）。
         const args = argumentsList.map((argument) => sanitizeValue(argument));
         let result = null;
         // 0.6：宿主调用也走任务层。开切片时若预算耗尽，返回 Promise（异步完成），
@@ -6135,6 +6917,42 @@ export class VMKernel {
       tasks() {
         return runtime.scheduler?.pendingTasks?.() ?? Object.freeze([]);
       },
+      // ---- 0.6.1 宿主接管面：取消 / 内存 / 泄漏 / 依赖图 / VM 上下文 ----
+      /** 取消任务：按 id / label / 谓词。组件没了，后台任务不许再动。 */
+      cancel(query) {
+        if (!active) throw new JLCRuntimeError("应用已卸载");
+        return runtime.cancelTask(query);
+      },
+      /** VM Execution Context：我是谁 / 我在哪 / 有什么权限 / 用了多少资源。 */
+      context() {
+        return runtime.destroyed ? Object.freeze({ active: false }) : runtime.vmContext();
+      },
+      /** Memory Accountant：state / checkpoint / task / cache 分户账。 */
+      memory() {
+        return runtime.destroyed ? Object.freeze({ active: false }) : runtime.memory();
+      },
+      /** 泄漏探测报告（未开启时 enabled: false）。 */
+      leaks() {
+        return runtime.destroyed ? Object.freeze({ active: false }) : runtime.leaks();
+      },
+      /** Effect Dependency Graph：整图导出（只读）。 */
+      dependencyGraph() {
+        return runtime.destroyed ? Object.freeze({ signals: Object.freeze([]), effects: Object.freeze([]), edges: Object.freeze([]) }) : runtime.dependencyGraph();
+      },
+      /** 改某个状态会牵动哪些 effect（含经由派生状态的间接依赖）。 */
+      dependents(name) {
+        return runtime.destroyed ? Object.freeze([]) : runtime.dependents(name);
+      },
+      /** 车道视图：运行数 / 强制让出 / 饥饿营救 / 帧预算（Scheduler v2.1）。 */
+      lanes() {
+        return runtime.scheduler?.laneStats?.() ?? Object.freeze({});
+      },
+      /** 采样一次泄漏探测（测试与手动巡检用）。 */
+      sampleLeaks() {
+        if (!active || !runtime.leakDetector) return handle.leaks();
+        runtime.leakDetector.sample(runtime.leakSnapshot());
+        return handle.leaks();
+      },
     };
 
     try {
@@ -6159,6 +6977,8 @@ export class VMKernel {
           runtime.initializing = false;
         },
       });
+      // 0.6.1：泄漏探测随挂载启动（自动采样；也可用 handle.sampleLeaks() 手动巡检）。
+      runtime.leakDetector?.start(() => runtime.leakSnapshot(), runtime.window ?? globalThis);
       return Object.freeze(handle);
     } catch (error) {
       runtime.initializing = false;
