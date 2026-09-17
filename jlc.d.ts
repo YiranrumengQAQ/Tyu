@@ -45,6 +45,14 @@ export interface JLCBytecodeDeclaration {
 export interface JLCBytecodeModule {
   readonly format: "jlc-bytecode";
   readonly version: number;
+  /** ABI v3：申报的能力图路径（与指令流交叉核对，只能少报不能多报）。 */
+  readonly declaredCapabilities?: readonly string[];
+  /** 验证器从指令流重算出的能力图路径。 */
+  readonly capabilityPaths?: readonly string[];
+  /** 资源清单：kind → 静态上界（`resourceManifestOf()` 的产物）。 */
+  readonly resourceManifest?: Readonly<Record<string, number>>;
+  /** 模块标志位（`MODULE_FLAGS` 位图：deterministic / network / timers / frames / windowEvents / workers）。 */
+  readonly flags?: number;
   readonly app: string;
   readonly sourceName: string;
   readonly pool: ReadonlyArray<string | number | boolean | null>;
@@ -212,6 +220,25 @@ export interface JLCAppHandle {
   describe(): JLCInstanceDescription;
   /** 当前生效的策略描述（含指纹与配额）。 */
   policy(): JLCPolicyDescription;
+  // ---- 0.6：宿主接管面 ----
+  /** 运行期授予能力（路径或裸名），立即生效。 */
+  grant(path: string, options?: { mode?: JLCPermissionMode; expires?: number }): JLCGrantRecord;
+  /** 运行期撤销能力：所有未来调用立刻失败，不需要重新挂载。 */
+  revoke(path: string, reason?: string): JLCGrantRecord;
+  /** 能力图视图：路径 / 状态 / 租约 / 调用与拒绝计数。 */
+  capabilities(): readonly JLCGrantRecord[];
+  /** 资源账本视图。 */
+  resources(): Readonly<Record<string, { readonly used: number; readonly limit: number; readonly peak: number; readonly ratio: number }>>;
+  /** 打运行时检查点（state / 权限 / 资源一起拍照）。 */
+  checkpoint(label?: string, meta?: Record<string, unknown>): JLCheckpointEntry | null;
+  /** 回滚到检查点（省略 label = 最近一个）；返回时视图已与 state 一致。 */
+  rollback(label?: string): JLCheckpointEntry | null;
+  /** 只读诊断视图：热点函数 / 资源 / 任务 / 挂起状态 / 检查点。 */
+  profile(): JLCProfile;
+  /** 只读快照：state + 策略 + 权限 + 资源 + 检查点。 */
+  snapshot(): Readonly<Record<string, unknown>>;
+  /** 尚未派发的调度任务。 */
+  tasks(): readonly Record<string, unknown>[];
   unmount(): void;
 }
 
@@ -240,6 +267,26 @@ export interface JLCMountOptions {
   maxLoop?: number;
   sourceName?: string;
   onError?: (error: Error) => void;
+  // ---- 0.6 ----
+  /** 解析后的故障级别：数字越小越先跑；与 0.4 的数字优先级同序。 */
+  faultStopLevel?: JLCFaultLevel;
+  /** 运行期授予的能力：路径或裸能力名 → 授权值（支持 `{ grant, mode, expires }`）。 */
+  grants?: Record<string, unknown>;
+  /** 裸能力名 → 能力路径（宿主自定义能力用；内置别名见 `CAPABILITY_ALIASES`）。 */
+  capabilityPaths?: Record<string, string>;
+  /** 资源限额：`RESOURCE_KINDS` 的任意子集。 */
+  resources?: Record<string, number>;
+  /** 检查点数量上限（默认 8）。 */
+  checkpointLimit?: number;
+  /** 协作式调度：单次任务的指令预算（0 = 关闭，行为与 0.4 一致）。 */
+  maxSliceSteps?: number;
+  /** 协作式调度：单次任务的时间预算（毫秒，0 = 关闭）。 */
+  frameBudgetMs?: number;
+  /** 宿主同步调用是否参与切片；关闭时保持同步语义（默认 true）。 */
+  sliceHostCalls?: boolean;
+  /** 打开逐指令热点统计（默认 false，零开销）。 */
+  profile?: boolean;
+  debug?: boolean;
 }
 
 export interface JLCKernelOptions {
@@ -356,6 +403,16 @@ export class VMKernel {
   policy(nameOrOverride?: JLCPolicyInput): JLCPolicy;
   list(): readonly JLCInstanceDescription[];
   demountAll(): number;
+  /** 0.6：结构化验证报告（11 趟，永不抛异常）。 */
+  verify(sourceOrProgram: unknown, options?: { mode?: "normal" | "strict"; sourceName?: string }): JLCVerifyReport;
+  /** 0.6：控制流图文本（`options.text === false` 时返回原始 CFG 数组）。 */
+  graph(sourceOrProgram: unknown, options?: { text?: boolean }): string | readonly unknown[];
+  /** 0.6：模块分析视图（CFG 统计 / 能力路径 / 确定性 / 警告）。 */
+  analyze(sourceOrProgram: unknown): JLCAnalysis;
+  /** 0.6：全内核诊断汇总。 */
+  profileAll(): readonly JLCProfile[];
+  /** 0.6：全内核资源汇总。 */
+  resources(): Readonly<Record<string, { used: number; limit: number; peak: number }>>;
   mount(
     module: JLCBytecodeModule | JLCProgram | Uint8Array,
     target: string | Element,
@@ -395,3 +452,183 @@ export function disassembleModule(module: JLCBytecodeModule): string;
 export const JLC: JLCKernel;
 export const JLCVM: VMKernel;
 export default JLC;
+
+/* ================================================================
+ * 0.6 内核子系统
+ * ================================================================ */
+
+export type JLCFaultLevel = "ignore" | "degrade" | "recover" | "restart" | "rollback" | "stop";
+export type JLCPermissionMode = "session" | "once" | "persistent";
+export type JLCPermissionState =
+  | "requested" | "granted" | "denied" | "session" | "once"
+  | "persistent" | "suspended" | "revoked" | "expired";
+
+export interface JLCGrantRecord {
+  readonly path: string;
+  readonly state: JLCPermissionState;
+  readonly granted: boolean;
+  readonly mode: JLCPermissionMode | null;
+  readonly expires: number;
+  readonly calls: number;
+  readonly denials: number;
+  readonly reason: string | null;
+}
+
+export interface JLCheckpointEntry {
+  readonly label: string;
+  readonly serial: number;
+  readonly at: number;
+  readonly signalNames: readonly string[];
+}
+
+export interface JLCProfile {
+  readonly app: string | null;
+  readonly active: boolean;
+  readonly profiling: boolean;
+  readonly instructions: number;
+  readonly domMutations: number;
+  readonly counters: Readonly<Record<string, number>>;
+  readonly usage: Readonly<Record<string, number>>;
+  readonly resources: Readonly<Record<string, { readonly used: number; readonly limit: number; readonly peak: number }>>;
+  readonly hot: ReadonlyArray<{ readonly function: string; readonly instructions: number; readonly share: number }>;
+  readonly pending: readonly Record<string, unknown>[];
+  readonly suspended: boolean;
+  readonly checkpoints: readonly JLCheckpointEntry[];
+}
+
+export interface JLCAnalysis {
+  readonly abi: string;
+  readonly version: number;
+  readonly app: string;
+  readonly mode: string;
+  readonly passes: readonly string[];
+  readonly functions: ReadonlyArray<{
+    readonly name: string;
+    readonly kind: "expr" | "body" | "view";
+    readonly maxStack: number;
+    readonly blocks: number;
+    readonly edges: number;
+    readonly unreachable: number;
+    readonly loops: number;
+  }>;
+  readonly warnings: readonly string[];
+  readonly errors: readonly string[];
+  readonly requirements: readonly string[];
+  readonly capabilityPaths: readonly string[];
+  readonly determinism: { readonly deterministic: boolean; readonly reasons: readonly string[] };
+  readonly stats: Readonly<Record<string, number>>;
+}
+
+export interface JLCVerifyReport {
+  readonly ok: boolean;
+  readonly moduleName: string;
+  readonly abi: string;
+  readonly bytecodeVersion: number;
+  readonly mode: string;
+  readonly passes: ReadonlyArray<{ readonly id: number; readonly name: string; readonly label: string; readonly ok: boolean }>;
+  readonly warnings: readonly string[];
+  readonly errors: readonly string[];
+  readonly analysis: JLCAnalysis | null;
+}
+
+export interface JLCBlock {
+  readonly id: number;
+  readonly start: number;
+  readonly end: number;
+  readonly kind: "fallthrough" | "branch" | "jump" | "exit";
+  readonly successors: readonly (number | string)[];
+}
+
+export interface JLCControlFlowGraph {
+  readonly function: string;
+  readonly kind: string;
+  readonly blocks: readonly JLCBlock[];
+  readonly edges: readonly string[];
+  readonly unreachable: readonly { readonly id: number; readonly start: number; readonly end: number }[];
+  readonly loopEdges: readonly string[];
+  readonly truncated: boolean;
+}
+
+export interface JLCPermissionKernelOptions {
+  readonly grants?: Record<string, unknown>;
+  readonly aliases?: Record<string, string>;
+  readonly strict?: boolean;
+  readonly now?: () => number;
+}
+
+export class PermissionKernel {
+  constructor(options?: JLCPermissionKernelOptions);
+  pathOf(name: string): string | null;
+  register(name: string, path: string): this;
+  define(pathOrName: string, value?: unknown): JLCGrantRecord;
+  grant(pathOrName: string, options?: { mode?: JLCPermissionMode; expires?: number }): JLCGrantRecord;
+  deny(pathOrName: string, reason?: string | null): JLCGrantRecord;
+  revoke(pathOrName: string, reason?: string): JLCGrantRecord;
+  suspend(pathOrName: string, reason?: string): JLCGrantRecord;
+  lease(pathOrName: string, ttlMs: number, options?: { mode?: JLCPermissionMode }): JLCGrantRecord;
+  check(pathOrName: string): { readonly ok: boolean; readonly path: string | null; readonly state: string; readonly reason: string | null };
+  list(): readonly JLCGrantRecord[];
+  snapshot(): Readonly<Record<string, unknown>>;
+  restore(snapshot: unknown): this;
+}
+
+export class ResourceKernel {
+  constructor(runtime: unknown, limits?: Record<string, number>);
+  limitOf(kind: string): number;
+  setLimit(kind: string, value: number): this;
+  usageOf(kind: string): number;
+  reserve(kind: string, amount?: number): number | null;
+  release(kind: string, amount?: number): number;
+  usage(): Readonly<Record<string, { readonly used: number; readonly limit: number; readonly peak: number; readonly ratio: number }>>;
+  snapshot(): Readonly<Record<string, unknown>>;
+  restore(snapshot: unknown): this;
+}
+
+export class CheckpointStore {
+  constructor(runtime: unknown, options?: { limit?: number });
+  capture(label?: string, extra?: Record<string, unknown> | null): JLCheckpointEntry | null;
+  restore(label: string): JLCheckpointEntry | null;
+  list(): readonly JLCheckpointEntry[];
+  drop(label: string): boolean;
+  clear(): void;
+}
+
+export class JLCYieldSignal extends Error {
+  readonly isYieldSignal: true;
+  readonly info: Readonly<Record<string, unknown>>;
+}
+export class JLCBudgetError extends JLCRuntimeError {
+  readonly code: "E_BUDGET";
+  readonly budget: number;
+  readonly steps: number;
+}
+export function isYieldSignal(value: unknown): boolean;
+
+export function normalizeFaultLevel(value: unknown, fallback?: JLCFaultLevel): JLCFaultLevel;
+export function normalizePriority(value: unknown, fallback?: number): number;
+export function normalizeCapabilityGrants(input: unknown): Record<string, unknown>;
+export function normalizeResourceLimits(input: unknown): Record<string, number>;
+export function isCapabilityPath(path: string): boolean;
+export function capabilityAncestors(path: string): readonly string[];
+export function buildCFG(func: JLCBytecodeFunction, module?: JLCBytecodeModule): JLCControlFlowGraph;
+export function analyzeAbstractStack(func: JLCBytecodeFunction, module: JLCBytecodeModule, options?: { strict?: boolean }): { readonly warnings: readonly string[]; readonly visited: number };
+export function analyzeModule(module: JLCBytecodeModule, options?: { mode?: "normal" | "strict" }): JLCAnalysis;
+export function moduleAnalysis(module: JLCBytecodeModule): JLCAnalysis | null;
+export function verifyReport(module: JLCBytecodeModule, sourceName?: string, options?: { mode?: "normal" | "strict" }): JLCVerifyReport;
+export function resourceManifestOf(module: JLCBytecodeModule, analysis?: JLCAnalysis | null): Record<string, number>;
+
+export const FAULT_LEVELS: readonly JLCFaultLevel[];
+export const FAULT_ALIASES: Readonly<Record<string, JLCFaultLevel>>;
+export const FAULT_POLICY: Readonly<Record<JLCFaultLevel, { readonly level: number; readonly label: string; readonly note: string }>>;
+export const PRIORITY: Readonly<{ SYSTEM: 0; INPUT: 1; INTERACTION: 2; RENDER: 3; EFFECT: 4; NETWORK: 5; BACKGROUND: 6; IDLE: 7 }>;
+export const PRIORITY_NAMES: readonly string[];
+export const TASK_PRIORITY: Readonly<Record<string, number>>;
+export const CAPABILITY_TREE: Readonly<Record<string, unknown>>;
+export const CAPABILITY_PATHS: readonly string[];
+export const CAPABILITY_ALIASES: Readonly<Record<string, string>>;
+export const PERMISSION_STATES: readonly JLCPermissionState[];
+export const RESOURCE_KINDS: readonly string[];
+export const DEFAULT_RESOURCE_LIMITS: Readonly<Record<string, number>>;
+export const VERIFIER_PASSES: ReadonlyArray<{ readonly id: number; readonly name: string; readonly label: string }>;
+export const MODULE_FLAGS: Readonly<Record<string, number>>;
+export const ABI_MIN_KERNEL: string;

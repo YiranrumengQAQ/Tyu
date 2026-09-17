@@ -13,30 +13,68 @@
 import {
   VERSION,
   ABI_VERSION,
+  ABI_MIN_KERNEL,
   BYTECODE_VERSION,
+  ACCEPTED_BYTECODE_VERSIONS,
   JLCCompileError,
   JLCRuntimeError,
   JLCVerifyError,
   JLCPolicyError,
   JLCQuotaError,
   JLCIsolationError,
+  JLCProgram,
+  VMKernel,
   OP,
   OP_SPEC,
   encodeModule,
   decodeModule,
   loadModule,
   verifyModule,
+  verifyReport,
+  resolveModule,
   auditModule,
+  analyzeModule,
+  moduleAnalysis,
+  buildCFG,
+  analyzeAbstractStack,
   disassembleModule,
   resolvePolicy,
   checkPermissions,
   policyViolation,
   scopeStylesheet,
+  resourceManifestOf,
   SECURITY_PROFILES,
   POLICY_KEYS,
   SYSCALLS,
-  JLCProgram,
-  VMKernel,
+  REQUIREMENT_KINDS,
+  HARD_BLOCKED_TAGS,
+  HARD_BLOCKED_PROPERTIES,
+  FAULT_LEVELS,
+  FAULT_ALIASES,
+  FAULT_POLICY,
+  normalizeFaultLevel,
+  PRIORITY,
+  PRIORITY_NAMES,
+  TASK_PRIORITY,
+  normalizePriority,
+  CAPABILITY_TREE,
+  CAPABILITY_PATHS,
+  CAPABILITY_ALIASES,
+  isCapabilityPath,
+  capabilityAncestors,
+  normalizeCapabilityGrants,
+  normalizeResourceLimits,
+  PermissionKernel,
+  ResourceKernel,
+  CheckpointStore,
+  RESOURCE_KINDS,
+  DEFAULT_RESOURCE_LIMITS,
+  PERMISSION_STATES,
+  VERIFIER_PASSES,
+  MODULE_FLAGS,
+  JLCYieldSignal,
+  isYieldSignal,
+  JLCBudgetError,
   createVMKernel,
   JLCVM,
 } from "./jlc-vm.js";
@@ -45,28 +83,68 @@ import { tokenize, Parser, parseSource, optimizeProgram, compileAst, CompilerKer
 export {
   VERSION,
   ABI_VERSION,
+  ABI_MIN_KERNEL,
   BYTECODE_VERSION,
+  ACCEPTED_BYTECODE_VERSIONS,
   JLCCompileError,
   JLCRuntimeError,
   JLCVerifyError,
   JLCPolicyError,
   JLCQuotaError,
   JLCIsolationError,
+  JLCProgram,
+  VMKernel,
   OP,
   OP_SPEC,
   encodeModule,
   decodeModule,
   loadModule,
   verifyModule,
+  verifyReport,
+  resolveModule,
   auditModule,
+  analyzeModule,
+  moduleAnalysis,
+  buildCFG,
+  analyzeAbstractStack,
   disassembleModule,
   resolvePolicy,
   checkPermissions,
   policyViolation,
   scopeStylesheet,
+  resourceManifestOf,
   SECURITY_PROFILES,
   POLICY_KEYS,
   SYSCALLS,
+  REQUIREMENT_KINDS,
+  HARD_BLOCKED_TAGS,
+  HARD_BLOCKED_PROPERTIES,
+  FAULT_LEVELS,
+  FAULT_ALIASES,
+  FAULT_POLICY,
+  normalizeFaultLevel,
+  PRIORITY,
+  PRIORITY_NAMES,
+  TASK_PRIORITY,
+  normalizePriority,
+  CAPABILITY_TREE,
+  CAPABILITY_PATHS,
+  CAPABILITY_ALIASES,
+  isCapabilityPath,
+  capabilityAncestors,
+  normalizeCapabilityGrants,
+  normalizeResourceLimits,
+  PermissionKernel,
+  ResourceKernel,
+  CheckpointStore,
+  RESOURCE_KINDS,
+  DEFAULT_RESOURCE_LIMITS,
+  PERMISSION_STATES,
+  VERIFIER_PASSES,
+  MODULE_FLAGS,
+  JLCYieldSignal,
+  isYieldSignal,
+  JLCBudgetError,
   createVMKernel,
   JLCVM,
   tokenize,
@@ -102,6 +180,63 @@ export class JLCKernel extends VMKernel {
   /** 可用策略档与全部可授予接口（管理台直接渲染）。 */
   policies() {
     return Object.keys(SECURITY_PROFILES).map((name) => ({ name, policy: resolvePolicy(name) }));
+  }
+
+  /** 结构化验证报告（0.6 多趟验证：永不抛错，工具链友好）。 */
+  verify(sourceOrProgram, options = {}) {
+    const module = this.resolveModuleFor(sourceOrProgram);
+    return verifyReport(module, options.sourceName ?? module.sourceName ?? "<jbc>", options);
+  }
+
+  /** 控制流图文本（Pass 6 的调试视图）。 */
+  graph(sourceOrProgram, options = {}) {
+    const module = this.resolveModuleFor(sourceOrProgram);
+    const analysis = moduleAnalysis(module);
+    const lines = [`; JLC CFG — app ${module.app} (abi ${ABI_VERSION}, ${analysis?.functions.length ?? module.functions.length} functions)`];
+    for (const func of module.functions) {
+      const cfg = buildCFG(func, module);
+      lines.push("", `function ${func.name} (${func.kind}, ${cfg.blocks.length} blocks, ${cfg.loopEdges.length} loop edges)`);
+      for (const block of cfg.blocks) {
+        const arrow = block.successors.length ? ` --> ${block.successors.join(", ")}` : "";
+        lines.push(`  [B${block.id}] @${block.start}..${block.end} ${block.terminator?.name ?? block.instructions.at(-1)?.name ?? "?"}${arrow}`);
+      }
+      if (cfg.unreachable.length) lines.push(`  unreachable: ${cfg.unreachable.map((block) => `B${block.id}@${block.start}`).join(", ")}`);
+    }
+    if (options.text !== false) return lines.join("\n");
+    return module.functions.map((func) => buildCFG(func, module));
+  }
+
+  /** 模块分析视图（CFG 统计 / 能力路径 / 确定性 / 警告）。 */
+  analyze(sourceOrProgram) {
+    const module = this.resolveModuleFor(sourceOrProgram);
+    return moduleAnalysis(module) ?? analyzeModule(module);
+  }
+
+  resolveModuleFor(sourceOrProgram) {
+    const module = resolveModule(sourceOrProgram);
+    if (module) return module;
+    if (typeof this.compile === "function") return this.compile(String(sourceOrProgram)).module;
+    throw new JLCRuntimeError("VM 内核只能分析字节码模块或 .jbc 二进制；源码请使用完整内核");
+  }
+
+  /** 全部在册实例的诊断汇总（系统监视器）。 */
+  profileAll() {
+    return Object.freeze([...this.instances].map((handle) => handle.profile()));
+  }
+
+  /** 全内核资源账本汇总。 */
+  resources() {
+    const total = {};
+    for (const handle of this.instances) {
+      const usage = handle.resources();
+      for (const [kind, entry] of Object.entries(usage)) {
+        const slot = total[kind] ?? (total[kind] = { used: 0, limit: 0, peak: 0 });
+        slot.used += entry.used;
+        slot.limit += entry.limit;
+        slot.peak += entry.peak;
+      }
+    }
+    return Object.freeze(total);
   }
 
   /** 反汇编程序或模块（调试视图）。 */

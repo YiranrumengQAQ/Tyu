@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JLC 0.6 内核控制台</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0d1117;
+        --panel: #161b22;
+        --line: #30363d;
+        --text: #e6edf3;
+        --dim: #8b949e;
+        --ok: #3fb950;
+        --warn: #d29922;
+        --bad: #f85149;
+        --key: #58a6ff;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font: 14px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      header {
+        padding: 18px 22px 12px;
+        border-bottom: 1px solid var(--line);
+      }
+      h1 { margin: 0 0 6px; font-size: 17px; }
+      header p { margin: 0; color: var(--dim); font-size: 12.5px; }
+      .wrap { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 420px); gap: 16px; padding: 16px 22px 40px; }
+      @media (max-width: 900px) { .wrap { grid-template-columns: 1fr; } }
+      section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 14px 16px;
+        margin-bottom: 14px;
+      }
+      h2 { margin: 0 0 10px; font-size: 13px; color: var(--key); letter-spacing: .04em; text-transform: uppercase; }
+      button {
+        background: #21262d;
+        color: var(--text);
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        padding: 6px 11px;
+        margin: 0 6px 6px 0;
+        font: inherit;
+        font-size: 12.5px;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--key); }
+      button.danger { color: var(--bad); }
+      table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+      th, td { text-align: left; padding: 3px 6px; border-bottom: 1px solid #21262d; }
+      th { color: var(--dim); font-weight: 500; }
+      .ok { color: var(--ok); }
+      .warn { color: var(--warn); }
+      .bad { color: var(--bad); }
+      .dim { color: var(--dim); }
+      #app-host { min-height: 220px; }
+      #app-host ul { margin: 8px 0 0; padding-left: 18px; color: var(--dim); }
+      #app-host strong { color: var(--ok); }
+      #app-host button { margin-right: 8px; }
+      #log { max-height: 190px; overflow: auto; font-size: 12px; }
+      #log div { border-bottom: 1px solid #21262d; padding: 2px 0; }
+      .meter { height: 6px; background: #21262d; border-radius: 4px; overflow: hidden; margin-top: 3px; }
+      .meter span { display: block; height: 100%; background: var(--key); }
+      code { color: var(--warn); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>JLC 0.6 内核控制台</h1>
+      <p>
+        ABI <code>jlc-abi/3</code> · 字节码 v3 · 能力图 / 权限内核 / 资源内核 / 六级故障阶梯 / 协作式调度。
+        下面每个按钮都在调用真实的 0.6 内核 API，右侧面板直接读内核的只读视图。
+      </p>
+    </header>
+
+    <div class="wrap">
+      <div>
+        <section>
+          <h2>被 VM 接管的界面（.jlc → .jbc → VM → DOM）</h2>
+          <div id="app-host"></div>
+        </section>
+
+        <section>
+          <h2>宿主接管面</h2>
+          <button data-act="revoke" class="danger">撤销 storage.indexeddb</button>
+          <button data-act="grant">重新授予</button>
+          <button data-act="checkpoint">打检查点</button>
+          <button data-act="rollback">回滚</button>
+          <button data-act="bump">count += 1</button>
+          <button data-act="big">追加 2000 行（分片渲染）</button>
+          <button data-act="boom">让组件崩一次（restart）</button>
+          <button data-act="verify">跑 11 趟验证</button>
+          <button data-act="graph">打印 CFG</button>
+        </section>
+
+        <section>
+          <h2>内核日志</h2>
+          <div id="log"></div>
+        </section>
+      </div>
+
+      <div>
+        <section><h2>能力图 / 权限内核</h2><div id="perms"></div></section>
+        <section><h2>资源内核</h2><div id="res"></div></section>
+        <section><h2>调度 / 故障 / 检查点</h2><div id="sched"></div></section>
+        <section><h2>热点函数（profile: true）</h2><div id="hot"></div></section>
+      </div>
+    </div>
+
+    <script type="module">
+      import JLC, { CAPABILITY_PATHS, FAULT_LEVELS } from "../../jlc.js";
+
+      const logNode = document.querySelector("#log");
+      const log = (message, kind = "") => {
+        const row = document.createElement("div");
+        row.className = kind;
+        row.textContent = `${new Date().toLocaleTimeString()} ${message}`;
+        logNode.prepend(row);
+      };
+
+      const source = String.raw`
+app KernelDemo {
+  state count = 0;
+  state rows = [];
+  derive label = "count=" + count;
+  action save() { storagePut("count", count); }
+  action bump() { count += 1; save(); }
+  action grow(n) { rows = range(1, n); }
+  view {
+    main {
+      button(on:click.prevent = { bump(); }) { text "bump + save" }
+      strong { text label + " / rows=" + len(rows) }
+      when (count > 3) { text mirror(); } else { text "（count ≤ 3）" }
+      ul { each (row in rows key row) { li { text "#" + string(row) } } }
+    }
+  }
+}`;
+
+      const program = JLC.compile(source, { sourceName: "kernel-demo.jlc" });
+      let flakyCalls = 0;
+
+      const host = document.querySelector("#app-host");
+      const app = program.mount(host, {
+        policy: "open",
+        fault: "restart",
+        maxSliceSteps: 20_000,
+        frameBudgetMs: 6,
+        renderChunk: 64,
+        profile: true,
+        capabilities: {
+          storagePut: (key, value) => {
+            log(`capability storagePut(${JSON.stringify(key)}, ${JSON.stringify(value)})`);
+            return true;
+          },
+          mirror: () => {
+            flakyCalls += 1;
+            if (flakyCalls === 1) throw new Error("第一次必炸：看看内核怎么处理");
+            return "mirror ok";
+          },
+        },
+        capabilityPaths: { storagePut: "storage.indexeddb", mirror: "browser.navigation" },
+        grants: { "storage.indexeddb": { mode: "session" } },
+        onError: (error) => log(`onError: ${error.message}`, "bad"),
+        onFault: (error, info) => log(`onFault(${info.mode}): ${error.message}`, "warn"),
+        state: { count: 0, rows: [] },
+      });
+
+      /* ---------------- 右侧面板：全部来自内核只读视图 ---------------- */
+
+      const renderTable = (rows, columns) => {
+        const table = document.createElement("table");
+        table.innerHTML = `<tr>${columns.map((column) => `<th>${column}</th>`).join("")}</tr>`;
+        for (const row of rows) {
+          const tr = document.createElement("tr");
+          for (const cell of row) {
+            const td = document.createElement("td");
+            td.innerHTML = String(cell);
+            tr.append(td);
+          }
+          table.append(tr);
+        }
+        return table;
+      };
+
+      function paint() {
+        const capabilities = app.capabilities();
+        const perms = document.querySelector("#perms");
+        perms.replaceChildren(renderTable(
+          capabilities.map((entry) => [
+            entry.path,
+            `<span class="${entry.granted ? "ok" : "bad"}">${entry.state}</span>`,
+            entry.granted ? `${entry.mode}${entry.expires ? ` · 到期 ${new Date(entry.expires).toLocaleTimeString()}` : ""}` : `<span class="dim">${entry.reason ?? ""}</span>`,
+            `${entry.calls} / ${entry.denials}`,
+          ]),
+          ["能力路径", "状态", "模式", "调用/拒绝"],
+        ));
+
+        const resources = app.resources();
+        const res = document.querySelector("#res");
+        res.replaceChildren(renderTable(
+          Object.entries(resources).map(([kind, entry]) => [
+            kind,
+            `${entry.used}${entry.limit ? ` / ${entry.limit}` : " / ∞"}`,
+            entry.limit ? `<div class="meter"><span style="width:${Math.min(100, Math.round((entry.used / entry.limit) * 100))}%"></span></div>` : `<span class="dim">不限</span>`,
+          ]),
+          ["资源", "用量", "占比"],
+        ));
+
+        const profile = app.profile();
+        document.querySelector("#sched").replaceChildren(renderTable(
+          [
+            ["fault 档", app.policy().faultLevel, FAULT_LEVELS.join(" → ")],
+            ["任务 / 让出", `${profile.counters.tasks} / ${profile.counters.yields}`, "协作式 VM 切片"],
+            ["渲染分片", profile.counters.renderSlices, "大列表分片渲染（每片让一帧）"],
+            ["重启 / 回滚", `${profile.counters.restarts} / ${profile.counters.rollbacks}`, "组件级重启 / 检查点回滚"],
+            ["故障计数", profile.counters.faults, "policy + fault 记账"],
+            ["挂起中", String(profile.suspended), "有没有未完成的续跑任务"],
+            ["检查点", profile.checkpoints.map((item) => item.label).join(", ") || "（无）", "state + 权限 + 资源"],
+          ],
+          ["项", "值", "说明"],
+        ));
+
+        const hot = document.querySelector("#hot");
+        hot.replaceChildren(renderTable(
+          profile.hot.slice(0, 8).map((entry) => [
+            entry.function,
+            entry.instructions.toLocaleString(),
+            `${(entry.share * 100).toFixed(1)}%`,
+          ]),
+          ["函数", "指令数", "占比"],
+        ));
+        if (typeof requestAnimationFrame === "function") requestAnimationFrame(() => setTimeout(paint, 80));
+        else setTimeout(paint, 80);
+      }
+      paint();
+
+      /* ---------------- 宿主接管按钮 ---------------- */
+
+      document.querySelectorAll("button[data-act]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const action = button.dataset.act;
+          button.disabled = true;
+          try {
+            if (action === "revoke") {
+              app.revoke("storage.indexeddb");
+              log("revoke storage.indexeddb → 下一次 storagePut 会被内核拦下");
+            } else if (action === "grant") {
+              app.grant("storage.indexeddb", { mode: "session" });
+              log("grant storage.indexeddb（session）");
+            } else if (action === "checkpoint") {
+              const entry = app.checkpoint("manual");
+              log(`checkpoint ${entry.label} @${new Date(entry.at).toLocaleTimeString()}`);
+            } else if (action === "rollback") {
+              const entry = app.rollback();
+              log(entry ? `rollback → ${entry.label}` : "没有可回滚的检查点");
+            } else if (action === "bump") {
+              await app.call("bump");
+              app.flush();
+              const caps = app.capabilities().find((entry) => entry.path === "storage.indexeddb");
+              log(
+                caps?.granted
+                  ? "handle.call('bump') → bump + save（storagePut 经能力图授权后执行）"
+                  : `handle.call('bump') → count 照常 +1，storagePut 被内核拦下（denials=${caps?.denials ?? "?"}）`,
+                caps?.granted ? "" : "warn",
+              );
+            } else if (action === "big") {
+              await app.call("grow", 2000);
+              app.flush();
+              log(`handle.call('grow', 2000) → 分片渲染让出 ${app.profile().counters.renderSlices} 次`);
+            } else if (action === "boom") {
+              flakyCalls = 0;
+              app.set("count", 4);
+              log("count=4 → when 分支会调用 mirror()，第一次必然抛错（fault: restart）", "warn");
+            } else if (action === "verify") {
+              const report = JLC.verify(program);
+              log(`verify ok=${report.ok} passes=${report.passes.length} warnings=${report.warnings.length} deterministic=${report.analysis.determinism.deterministic}`);
+              log(`接口清单：${report.analysis.requirements.join(", ") || "（无）"}`);
+              log(`能力路径：${report.analysis.capabilityPaths.join(", ") || "（本应用只用宿主自定义能力）"}`);
+              log(`CFG：${report.analysis.functions.slice(0, 6).map((fn) => `${fn.name}(b${fn.blocks}/l${fn.loops})`).join(" ")} …`);
+            } else if (action === "graph") {
+              for (const line of JLC.graph(program).split("\n").slice(0, 14)) log(line, "dim");
+              log(`（CAPABILITY_PATHS 共 ${CAPABILITY_PATHS.length} 条路径）`);
+            }
+          } catch (error) {
+            log(`${action} 失败：${error.name}: ${error.message}`, "bad");
+          } finally {
+            button.disabled = false;
+            paint();
+          }
+        });
+      });
+
+      window.__jlcDemo = { app, JLC, program, paint };
+    </script>
+  </body>
+</html>

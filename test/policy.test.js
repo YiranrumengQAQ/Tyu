@@ -572,14 +572,14 @@ test("capability allowlist turns host functions off without touching the app", (
  * ------------------------------------------------------------------ */
 
 test("bytecode ABI is versioned and refuses unknown containers", () => {
-  assert.equal(ABI_VERSION, "jlc-abi/2");
-  assert.equal(BYTECODE_VERSION, 2);
+  assert.equal(ABI_VERSION, "jlc-abi/3");
+  assert.equal(BYTECODE_VERSION, 3);
   const bytes = JLC.serialize('app V { state a = 1; view { text string(a); } }');
-  assert.equal(loadModule(bytes).version, 2);
+  assert.equal(loadModule(bytes).version, 3);
 
   const tooNew = Uint8Array.from(bytes);
-  tooNew[5] = 3;
-  assert.throws(() => loadModule(tooNew), (error) => error instanceof JLCVerifyError && /jlc-abi\/2/.test(error.message));
+  tooNew[5] = 9;
+  assert.throws(() => loadModule(tooNew), (error) => error instanceof JLCVerifyError && /jlc-abi\/3/.test(error.message));
 
   // v1 容器（没有清单段）照样被静态审计
   const legacy = cloneModule(JLC.compile('app L { view { iframe(srcdoc = "x"); } }').module, { version: 1, declaredRequirements: undefined });
@@ -590,7 +590,7 @@ test("bytecode ABI is versioned and refuses unknown containers", () => {
 test("the disassembler reports the manifest so tooling can diff permissions", () => {
   const program = JLC.compile('app D { view { iframe(srcdoc = "x"); my-el(); } }');
   const text = program.disassemble();
-  assert.match(text, /abi jlc-abi\/2/);
+  assert.match(text, /abi jlc-abi\/3/);
   assert.match(text, /\.requires/);
   assert.match(text, /frame:iframe/);
   assert.match(text, /tag:my-el/);

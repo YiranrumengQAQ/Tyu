@@ -118,7 +118,7 @@ each 记录都会创建子 Scope 并注册 deterministic 销毁，等价且不�
 ```text
 offset  size  field
 0       4     magic        0x4A 0x4C 0x43 0x42 ("JLCB"，即 u32 0x4A4C4342)
-4       2     version      u16 = 2（解码接受 [1, 2]：1 是无 MANIFEST 段的旧容器）
+4       2     version      u16 = 3（解码接受 [1, 2, 3]：1 无 MANIFEST，2 无 v3 段）
 6       2     flags        u16 保留
 8       2     sectionCount u16
 随后每个段：
@@ -138,6 +138,15 @@ offset  size  field
 | 6 | VIEW | view 函数索引 u16 |
 | 7 | META | app 名 P、sourceName 字符串（u32 长度 + UTF-8）、u16 保留 |
 | 8 | MANIFEST | u16 count；每项：u8 kind（0 tag / 1 frame / 2 url / 3 property / 4 attribute / 5 host / 6 window / 7 style / 8 capability）+ str detail |
+| 9 | CAPABILITIES | u16 count；每项 str path（能力图路径，如 `network.http`）|
+| 10 | RESOURCES | u16 count；每项 u8 kind（1 dom / 2 effects / 3 styles / 4 timers / 5 requests / 6 scopes / 7 listeners / 8 workers / 9 storage / 10 streams）+ u32 静态上界 |
+| 11 | FLAGS | u32 位图：1 deterministic / 2 network / 4 timers / 8 frames / 16 windowEvents / 32 workers |
+
+段 9–11 是 **ABI v3** 新增的。v1/v2 模块没有这些段，解码器按缺省处理；
+解码器同时**跳过未知段**（前向兼容），因此更高版本的内核可以读更老的产物，
+更低版本的内核读 v3 会显式报错而不是误解码。`CAPABILITIES` 与 `RESOURCES`
+由验证器从指令流重算（`analyzeModule()` / `resourceManifestOf()`），
+申报段同样遵循「只能少报不能多报」的铁律。
 
 所有多字节整数大端（与 class 文件一致）。序列化是确定性的：同一份源码
 编译两次得到逐字节相同的 .jbc，适合做构建产物校验与增量分发。

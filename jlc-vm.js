@@ -10,10 +10,14 @@
  * into bytecode is the job of jlc-compiler.js.
  */
 
-export const VERSION = "0.4.0";
-export const BYTECODE_VERSION = 2;
-export const ACCEPTED_BYTECODE_VERSIONS = [1, 2]; // 1 = 无需求清单的旧模块，运行期仍逐条把关
-export const ABI_VERSION = "jlc-abi/2";
+export const VERSION = "0.6.0";
+export const BYTECODE_VERSION = 3;
+// 1 = 无需求清单的旧模块；2 = 0.4 模块；3 = 0.6 模块（新增能力图 / 资源清单 / 标志段）。
+// 旧模块仍可装载，走兼容路径（运行期逐条把关 + 缺省资源清单）。
+export const ACCEPTED_BYTECODE_VERSIONS = [1, 2, 3];
+export const ABI_VERSION = "jlc-abi/3";
+// ABI v3 的最低兼容内核：0.4 内核（jlc-abi/2）只能读 v1/v2，读 v3 会显式报错而不是误解码。
+export const ABI_MIN_KERNEL = "0.6.0";
 export const MAGIC = 0x4a4c4342; // "JLCB" — JLC Bytecode container
 
 const CALLABLE = Symbol("jlc.callable");
@@ -197,7 +201,41 @@ export const POLICY_KEYS = Object.freeze([
   "frameSandbox", "frameMinIntervalMs", "htmlMaxChars",
   "maxDomNodes", "maxStyleBytes", "styleScoping", "gateMode", "blockedTags", "blockedProperties",
   "blockedAttributes", "strictUrls", "capabilityAllowlist", "audit", "label",
+  // ---- 0.6 ----
+  "capabilities", "resources", "permissionStrict",
 ]);
+
+/** 能力授权表：接受树形（{ network: { http: true } }）或扁平（{ "network.http": true }）。 */
+export function normalizeCapabilityGrants(input, prefix = "", out = {}) {
+  if (input == null) return out;
+  if (typeof input !== "object" || Array.isArray(input)) {
+    throw new JLCRuntimeError(`capabilities 必须是对象，收到 ${Array.isArray(input) ? "数组" : typeof input}`);
+  }
+  for (const [key, value] of Object.entries(input)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    if (value !== null && typeof value === "object" && !("grant" in value) && !("mode" in value) && !("expires" in value)) {
+      normalizeCapabilityGrants(value, path, out);
+      continue;
+    }
+    if (!isCapabilityPath(path)) {
+      throw new JLCRuntimeError(`未知能力路径“${path}”：请查阅 CAPABILITY_PATHS（能力图是内核唯一权威）`);
+    }
+    out[path] = value;
+  }
+  return out;
+}
+
+/** 资源限额表：只认 RESOURCE_KINDS，打错字段名直接拒绝（配额静默失效最危险）。 */
+export function normalizeResourceLimits(input) {
+  if (input == null) return null;
+  if (typeof input !== "object" || Array.isArray(input)) throw new JLCRuntimeError("resources 必须是对象");
+  const out = {};
+  for (const [kind, value] of Object.entries(input)) {
+    if (!RESOURCE_KINDS.includes(kind)) throw new JLCRuntimeError(`未知资源种类“${kind}”：可用 ${RESOURCE_KINDS.join(", ")}`);
+    out[kind] = Math.max(0, Math.floor(Number(value) || 0));
+  }
+  return out;
+}
 
 /** 策略字段 → 人类可读说明；同时是文档与 playground 权限面板的唯一数据源。 */
 export const SYSCALLS = Object.freeze([
@@ -293,6 +331,9 @@ export function resolvePolicy(input = "strict") {
     blockedProperties: toSet(merged.blockedProperties, DEFAULT_BLOCKED_PROPERTIES),
     blockedAttributes: toSet(merged.blockedAttributes, DEFAULT_BLOCKED_ATTRIBUTES),
     capabilityAllowlist: merged.capabilityAllowlist == null ? null : Object.freeze([...merged.capabilityAllowlist]),
+    capabilities: merged.capabilities == null ? null : Object.freeze(normalizeCapabilityGrants(merged.capabilities)),
+    resources: merged.resources == null ? null : Object.freeze(normalizeResourceLimits(merged.resources)),
+    permissionStrict: Boolean(merged.permissionStrict),
     audit: typeof merged.audit === "function" ? merged.audit : null,
   };
   // 指纹覆盖全部策略字段（label 只用于显示，不参与）：任何一处不同，指纹就不同。
@@ -411,24 +452,45 @@ function requirementKey(kind, detail) {
 function guardSurface(runtime, kind, detail, message) {
   if (!runtime) return "allow";
   const key = requirementKey(kind, detail);
-  const violation = runtime.deniedSet?.has(key)
+  let violation = runtime.deniedSet?.has(key)
     ? runtime.deniedReasons?.get(key) ?? "策略拒绝"
     : policyViolation(runtime.policy, kind, detail);
+  // 0.6：capability 走权限内核——它带状态（granted / session / once / suspended /
+  // revoked / expired）与租约，运行中撤销立刻生效，不需要 unmount → mount。
+  let fromPermission = false;
+  if (!violation && kind === "capability" && runtime.permissions) {
+    const decision = runtime.permissions.check(detail);
+    if (!decision.ok) {
+      violation = decision.reason ?? `能力 ${decision.path} 处于 ${decision.state}`;
+      fromPermission = true;
+    }
+  }
   if (!violation) return "allow";
-  if (isHardViolation(kind, detail)) {
-    runtime.metrics.faults += 1;
-    throw new JLCPolicyError(message ?? `${key} 属于内核硬限制，任何策略档与 fault 档都不放行：${violation}`);
-  }
-  if (runtime.faultMode === "report") {
-    notePolicy(runtime, { action: "report", kind, detail, message: violation });
-    return "allow";
-  }
-  if (runtime.faultMode === "degrade") {
+  // 权限内核的裁决不受 fault 档影响：撤销/暂停/租约到期必须立刻生效，
+  // 否则「运行中撤销授权」就只是一句空话。
+  if (fromPermission) {
     runtime.metrics.faults += 1;
     if (!runtime.denied.some((item) => item.key === key)) {
       runtime.denied.push({ kind, detail, reason: violation, message: message ?? null, key });
     }
-    notePolicy(runtime, { action: "degrade", kind, detail, message: violation });
+    notePolicy(runtime, { action: "revoke", kind, detail, message: violation });
+    return "skip";
+  }
+  if (isHardViolation(kind, detail)) {
+    runtime.metrics.faults += 1;
+    throw new JLCPolicyError(message ?? `${key} 属于内核硬限制，任何策略档与 fault 档都不放行：${violation}`);
+  }
+  const level = normalizeFaultLevel(runtime.faultMode, "recover");
+  if (level === "ignore" || level === "recover") {
+    notePolicy(runtime, { action: level === "ignore" ? "ignore" : "report", kind, detail, message: violation });
+    return "allow";
+  }
+  if (level !== "stop") {
+    runtime.metrics.faults += 1;
+    if (!runtime.denied.some((item) => item.key === key)) {
+      runtime.denied.push({ kind, detail, reason: violation, message: message ?? null, key });
+    }
+    notePolicy(runtime, { action: level, kind, detail, message: violation });
     return "skip";
   }
   throw new JLCPolicyError(message ?? `策略 ${runtime.policy.profile} 拒绝接口 ${key}：${violation}`);
@@ -441,6 +503,729 @@ function policyDeny(runtime, kind, detail, message) {
 
 function policyAllow(runtime, kind, detail, message) {
   if (runtime?.policy?.audit && message) notePolicy(runtime, { action: "allow", kind, detail, message });
+}
+
+/* ================================================================
+ * 0.6 内核子系统之一：故障阶梯（Fault Ladder）
+ *
+ * 0.3/0.4 只有 report / degrade / stop 三档，粒度太粗：一个组件崩了要么
+ * 整页报错，要么静默降级。0.6 把它做成六级阶梯，由「故障发生在哪一层」
+ * 决定用哪一级——内核级不变量违规永远 stop，组件级异常优先 restart，
+ * 状态不一致才 rollback。
+ * ================================================================ */
+
+export const FAULT_LEVELS = Object.freeze(["ignore", "degrade", "recover", "restart", "rollback", "stop"]);
+
+/** 旧档名 → 0.6 档名（兼容 0.3/0.4 的 report/warn/throw 写法）。 */
+export const FAULT_ALIASES = Object.freeze({
+  report: "recover",
+  warn: "recover",
+  audit: "recover",
+  allow: "ignore",
+  skip: "degrade",
+  throw: "stop",
+  fail: "stop",
+  abort: "stop",
+  unmount: "stop",
+});
+
+/** 每一级故障的语义：给宿主 UI、诊断器和文档共用的一张表。 */
+export const FAULT_POLICY = Object.freeze({
+  ignore: Object.freeze({ level: 0, label: "忽略", note: "不拦截、不记账：只用于受信调试", escalates: false }),
+  degrade: Object.freeze({ level: 1, label: "降级", note: "跳过这一步，实例继续运行（可授予能力被收回）", escalates: false }),
+  recover: Object.freeze({ level: 2, label: "恢复", note: "放行 + 记账 + 上报宿主，由宿主决定后续", escalates: false }),
+  restart: Object.freeze({ level: 3, label: "重启组件", note: "销毁出错组件的作用域并重建（不牵连同批其它组件）", escalates: false }),
+  rollback: Object.freeze({ level: 4, label: "回滚", note: "回到最近的运行时检查点，恢复 state / 组件树", escalates: true }),
+  stop: Object.freeze({ level: 5, label: "停机", note: "卸载实例：内核不变量已不可信", escalates: true }),
+});
+
+export function normalizeFaultLevel(value, fallback = "recover") {
+  if (value == null) return fallback;
+  const text = String(value).toLowerCase();
+  const resolved = FAULT_ALIASES[text] ?? text;
+  return FAULT_LEVELS.includes(resolved) ? resolved : fallback;
+}
+
+/** 故障级别是否至少达到某一档（阶梯比较，宿主策略用）。 */
+export function faultAtLeast(level, threshold) {
+  return FAULT_POLICY[normalizeFaultLevel(level, "stop")].level >= FAULT_POLICY[normalizeFaultLevel(threshold, "stop")].level;
+}
+
+/* ================================================================
+ * 0.6 内核子系统之二：优先级通道（Priority Lanes）
+ *
+ * 0.4 的调度器只有一个队列，用 priority 数字排序；0.6 把它显式化为
+ * 8 条通道：用户输入永远抢在后台计算前面。数字越大优先级越低，
+ * 与 0.4 的既有写法（0 最高）完全同序，旧代码不需要改。
+ * ================================================================ */
+
+export const PRIORITY = Object.freeze({
+  SYSTEM: 0,
+  INPUT: 1,
+  INTERACTION: 2,
+  RENDER: 3,
+  EFFECT: 4,
+  NETWORK: 5,
+  BACKGROUND: 6,
+  IDLE: 7,
+});
+
+export const PRIORITY_NAMES = Object.freeze(["system", "input", "interaction", "render", "effect", "network", "background", "idle"]);
+
+const PRIORITY_BY_NAME = Object.freeze(Object.fromEntries(PRIORITY_NAMES.map((name, index) => [name, index])));
+
+/** 接受数字、别名名字（"render"）或 F 通道对象；越界夹到 [0, 7]。 */
+export function normalizePriority(value, fallback = PRIORITY.EFFECT) {
+  if (value == null) return fallback;
+  if (typeof value === "object" && value.name) return normalizePriority(value.priority ?? value.name, fallback);
+  if (typeof value === "string") {
+    const named = PRIORITY_BY_NAME[value.toLowerCase().replace(/^p/, "")];
+    if (named != null) return named;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.min(PRIORITY.IDLE, Math.max(PRIORITY.SYSTEM, Math.trunc(numeric)));
+}
+
+/** 任务种类 → 默认通道：内核替应用决定「什么该先跑」。 */
+export const TASK_PRIORITY = Object.freeze({
+  system: PRIORITY.SYSTEM,
+  input: PRIORITY.INPUT,
+  interaction: PRIORITY.INTERACTION,
+  render: PRIORITY.RENDER,
+  view: PRIORITY.RENDER,
+  effect: PRIORITY.EFFECT,
+  derive: PRIORITY.RENDER,
+  resource: PRIORITY.NETWORK,
+  network: PRIORITY.NETWORK,
+  timer: PRIORITY.BACKGROUND,
+  background: PRIORITY.BACKGROUND,
+  idle: PRIORITY.IDLE,
+});
+
+/* ================================================================
+ * 0.6 内核子系统之三：能力图（Capability Graph）
+ *
+ * 0.4 的授权单位是「一条接口需求」（tag:iframe、host:http……）。
+ * 0.6 把宿主能力显式建模成一棵树：每个叶子是一条可独立授予 / 撤销 /
+ * 租约的能力路径。授权、权限中心、诊断面板、IPC 都读同一棵树。
+ * ================================================================ */
+
+const node = (label, children = null) => Object.freeze({ label, children: children ? Object.freeze(children) : null });
+
+export const CAPABILITY_TREE = Object.freeze({
+  dom: node("DOM 树", {
+    read: node("读取节点与事件"),
+    create: node("创建节点"),
+    update: node("修改属性 / 文本 / 样式"),
+    remove: node("移除节点"),
+  }),
+  network: node("网络", {
+    http: node("HTTP / fetch"),
+    websocket: node("WebSocket"),
+    stream: node("流式响应 / SSE"),
+  }),
+  storage: node("存储", {
+    memory: node("内存快照"),
+    session: node("会话存储"),
+    indexeddb: node("IndexedDB"),
+    cache: node("缓存 / SW cache"),
+    transaction: node("事务与回滚"),
+    migration: node("结构迁移"),
+  }),
+  filesystem: node("文件系统", {
+    read: node("读文件", { picker: node("文件选择器"), stream: node("读取流") }),
+    write: node("写文件", { picker: node("保存对话框"), stream: node("写入流") }),
+    directory: node("目录", { read: node("列目录"), write: node("写目录") }),
+    download: node("导出下载"),
+  }),
+  browser: node("浏览器", {
+    navigation: node("历史 / 路由"),
+    title: node("标题与图标"),
+    clipboard: node("剪贴板", { read: node("读剪贴板"), write: node("写剪贴板") }),
+    fullscreen: node("全屏"),
+    notification: node("系统通知"),
+    share: node("系统分享"),
+    theme: node("主题"),
+    pwa: node("PWA 安装"),
+    serviceWorker: node("Service Worker"),
+    window: node("窗口级事件"),
+  }),
+  device: node("设备", {
+    camera: node("摄像头"),
+    microphone: node("麦克风"),
+    geolocation: node("定位"),
+    sensors: node("传感器"),
+    vibrate: node("振动"),
+    platform: node("平台信息"),
+  }),
+  compute: node("计算", {
+    worker: node("Worker VM"),
+    ipc: node("应用间 IPC"),
+    timers: node("定时器"),
+    frame: node("动画帧"),
+    crypto: node("加密原语"),
+    compression: node("压缩 / 解压"),
+  }),
+  process: node("进程管理", {
+    appManager: node("应用管理"),
+    permissionManager: node("权限管理"),
+    inspector: node("检查器 / 诊断"),
+    debugger: node("调试器"),
+  }),
+});
+
+function flattenCapabilityTree(tree, prefix = "", out = []) {
+  for (const [key, child] of Object.entries(tree)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    out.push(path);
+    if (child.children) flattenCapabilityTree(child.children, path, out);
+  }
+  return out;
+}
+
+/** 全部合法能力路径（含中间节点），冻结后可直接给 UI 渲染权限面板。 */
+export const CAPABILITY_PATHS = Object.freeze(flattenCapabilityTree(CAPABILITY_TREE));
+
+const CAPABILITY_PATH_SET = new Set(CAPABILITY_PATHS);
+
+/** 路径合法性：内核只认自己树里的路径，宿主不能凭空发明权限。 */
+export function isCapabilityPath(path) {
+  return CAPABILITY_PATH_SET.has(String(path));
+}
+
+/** 路径的祖先链：filesystem.read.picker → [filesystem, filesystem.read, filesystem.read.picker]。 */
+export function capabilityAncestors(path) {
+  const parts = String(path).split(".");
+  const out = [];
+  for (let index = 0; index < parts.length; index += 1) out.push(parts.slice(0, index + 1).join("."));
+  return out;
+}
+
+/**
+ * 旧宿主函数名 → 能力路径。0.5 的 Capability Hub 暴露的是 storagePut /
+ * clipboardWrite 这类裸名字；0.6 内核认识它们，从而让旧宿主零改动接入能力图。
+ * 宿主可用 mount({ capabilityPaths }) 覆盖或补充。
+ */
+export const CAPABILITY_ALIASES = Object.freeze({
+  storagePut: "storage.indexeddb",
+  storageGet: "storage.indexeddb",
+  storageClear: "storage.indexeddb",
+  storageKeys: "storage.indexeddb",
+  indexeddb: "storage.indexeddb",
+  clipboardWrite: "browser.clipboard.write",
+  clipboardRead: "browser.clipboard.read",
+  fileOpen: "filesystem.read.picker",
+  fileSave: "filesystem.write.picker",
+  fileRead: "filesystem.read",
+  fileWrite: "filesystem.write",
+  download: "filesystem.download",
+  downloadJson: "filesystem.download",
+  share: "browser.share",
+  shareSupported: "browser.share",
+  notify: "browser.notification",
+  notifyStatus: "browser.notification",
+  fullscreen: "browser.fullscreen",
+  fullscreenActive: "browser.fullscreen",
+  theme: "browser.theme",
+  themeCurrent: "browser.theme",
+  pwaInstall: "browser.pwa",
+  pwaStatus: "browser.pwa",
+  platform: "device.platform",
+  isMobile: "device.platform",
+  navigate: "browser.navigation",
+  route: "browser.navigation",
+  camera: "device.camera",
+  microphone: "device.microphone",
+  geolocation: "device.geolocation",
+  worker: "compute.worker",
+  spawnWorker: "compute.worker",
+  ipc: "compute.ipc",
+  debug: "process.inspector",
+  inspect: "process.inspector",
+});
+
+/* ================================================================
+ * 0.6 内核子系统之四：权限内核（Permission Kernel）
+ *
+ * 授权不再是一个 allow/deny 布尔的白名单，而是一组带状态与生命周期的
+ * 记录：requested / granted / denied / session / once / persistent /
+ * suspended / revoked / expired。运行中的实例被撤销授权后，后续每一次
+ * 调用立刻失败——不需要 unmount → mount。
+ * ================================================================ */
+
+export const PERMISSION_STATES = Object.freeze([
+  "requested", "granted", "denied", "session", "once", "persistent", "suspended", "revoked", "expired",
+]);
+
+const GRANT_MODES = new Set(["session", "once", "persistent"]);
+const LIVE_STATES = new Set(["granted", "session", "once", "persistent"]);
+
+export class PermissionKernel {
+  /**
+   * @param {object} options
+   * @param {object} [options.grants]  路径或别名 → true/false/"session"/"once"/{grant, mode, expires}
+   * @param {object} [options.aliases] 裸能力名 → 能力路径（默认 CAPABILITY_ALIASES）
+   * @param {number} [options.now]     测试可注入的时钟
+   */
+  constructor(options = {}) {
+    this.aliases = new Map(Object.entries({ ...CAPABILITY_ALIASES, ...(options.aliases ?? {}) }));
+    this.records = new Map();
+    this.strict = Boolean(options.strict);
+    this.now = typeof options.now === "function" ? options.now : () => Date.now();
+    this.audit = typeof options.audit === "function" ? options.audit : null;
+    this.serial = 0;
+    for (const [path, value] of Object.entries(options.grants ?? {})) this.define(path, value);
+  }
+
+  /** 行外名 → 路径：已注册别名、合法路径、或宿主临时登记的名字。 */
+  pathOf(name) {
+    const text = String(name ?? "");
+    if (!text) return null;
+    if (CAPABILITY_PATH_SET.has(text)) return text;
+    const alias = this.aliases.get(text);
+    if (alias) return alias;
+    const trimmed = text.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
+    if (CAPABILITY_PATH_SET.has(trimmed)) return trimmed;
+    return null;
+  }
+
+  /** 登记「裸函数名 → 能力路径」的映射（宿主自定义能力用）。 */
+  register(name, path) {
+    if (!isCapabilityPath(path)) throw new JLCRuntimeError(`未知能力路径“${path}”`);
+    this.aliases.set(String(name), path);
+    return this;
+  }
+
+  /** 声明/更新一条授权记录。value 可以是布尔、模式字符串或对象。 */
+  define(pathOrName, value = true) {
+    const path = this.pathOf(pathOrName) ?? String(pathOrName);
+    const entry = this.records.get(path) ?? {
+      path,
+      state: "requested",
+      mode: "session",
+      expires: 0,
+      used: 0,
+      calls: 0,
+      denials: 0,
+      reason: null,
+      since: this.now(),
+      serial: (this.serial += 1),
+    };
+    if (value === false) {
+      entry.state = "denied";
+      entry.reason = "宿主显式拒绝";
+    } else if (value === true) {
+      entry.state = "session";
+      entry.mode = "session";
+      entry.expires = 0;
+      entry.reason = null;
+    } else if (typeof value === "string") {
+      if (!GRANT_MODES.has(value)) throw new JLCRuntimeError(`未知授权模式“${value}”`);
+      entry.state = value;
+      entry.mode = value;
+    } else if (value && typeof value === "object") {
+      const mode = value.mode ?? (value.grant === false ? "denied" : "session");
+      if (value.grant === false) {
+        entry.state = "denied";
+        entry.reason = value.reason ?? "宿主显式拒绝";
+      } else {
+        if (!GRANT_MODES.has(mode)) throw new JLCRuntimeError(`未知授权模式“${mode}”`);
+        entry.state = mode;
+        entry.mode = mode;
+      }
+      if (value.reason != null) entry.reason = String(value.reason);
+      entry.expires = Number(value.expires ?? 0) || 0;
+      entry.persistent = Boolean(value.persistent);
+    }
+    entry.since = this.now();
+    this.records.set(path, entry);
+    this.note("define", entry);
+    return entry;
+  }
+
+  request(pathOrName, options = {}) {
+    const entry = this.define(pathOrName, { grant: options.grant ?? false, mode: options.mode, expires: options.expires, reason: options.reason });
+    if (options.grant) return entry;
+    entry.state = "requested";
+    this.note("request", entry);
+    return entry;
+  }
+
+  grant(pathOrName, options = {}) {
+    return this.define(pathOrName, { grant: true, mode: options.mode ?? "session", expires: options.expires, persistent: options.persistent });
+  }
+
+  deny(pathOrName, reason = null) {
+    const entry = this.define(pathOrName, { grant: false, reason });
+    entry.state = "denied";
+    return entry;
+  }
+
+  /** 撤销：运行期立即生效，所有未来调用失败（已在飞行中的请求不受影响）。 */
+  revoke(pathOrName, reason = "宿主撤销授权") {
+    const path = this.pathOf(pathOrName) ?? String(pathOrName);
+    const entry = this.records.get(path);
+    if (!entry) return this.define(path, { grant: false, reason });
+    entry.state = "revoked";
+    entry.reason = reason;
+    entry.expires = 0;
+    this.note("revoke", entry);
+    return entry;
+  }
+
+  suspend(pathOrName, reason = "宿主暂停授权") {
+    const path = this.pathOf(pathOrName) ?? String(pathOrName);
+    const entry = this.records.get(path);
+    if (!entry) return this.define(path, { grant: false, reason });
+    entry.state = "suspended";
+    entry.reason = reason;
+    this.note("suspend", entry);
+    return entry;
+  }
+
+  restore(pathOrName, options = {}) {
+    return this.grant(pathOrName, options);
+  }
+
+  /** 租约：到期自动失效（不需要定时器，判定是惰性的）。 */
+  lease(pathOrName, ttlMs, options = {}) {
+    return this.grant(pathOrName, { mode: options.mode ?? "session", expires: this.now() + Math.max(0, Number(ttlMs) || 0) });
+  }
+
+  /** 单点裁决：返回决策对象，永远不抛异常（抛不抛由调用方决定）。 */
+  check(pathOrName) {
+    const path = this.pathOf(pathOrName);
+    if (!path) return Object.freeze({ ok: true, mapped: false, path: null, state: "unmapped", mode: null, reason: null });
+    let entry = this.records.get(path);
+    if (!entry) {
+      // 中间节点授权：filesystem.read 授予 = 其下 picker / stream 全部可读。
+      const chain = capabilityAncestors(path);
+      for (let index = chain.length - 2; index >= 0; index -= 1) {
+        const ancestor = this.records.get(chain[index]);
+        if (ancestor && LIVE_STATES.has(ancestor.state)) {
+          entry = ancestor;
+          break;
+        }
+      }
+    }
+    if (!entry) {
+      if (this.strict) {
+        return Object.freeze({ ok: false, mapped: true, path, state: "requested", mode: null, reason: `能力 ${path} 未被授予（strict 权限模式）` });
+      }
+      return Object.freeze({ ok: true, mapped: true, path, state: "unmapped", mode: null, reason: null });
+    }
+    if (entry.expires > 0 && this.now() >= entry.expires) {
+      entry.state = "expired";
+      entry.reason = "授权租约到期";
+      this.note("expire", entry, true);
+    }
+    if (!LIVE_STATES.has(entry.state)) {
+      entry.denials += 1;
+      this.note("deny", entry, true);
+      return Object.freeze({ ok: false, mapped: true, path, state: entry.state, mode: entry.mode, reason: entry.reason ?? `能力 ${path} 处于 ${entry.state}` });
+    }
+    entry.calls += 1;
+    if (entry.state === "once") {
+      entry.used += 1;
+      entry.state = "expired";
+      entry.reason = "一次性授权已使用";
+    }
+    return Object.freeze({ ok: true, mapped: true, path, state: entry.state, mode: entry.mode, reason: null });
+  }
+
+  /** 管理视图：权限中心 / 权限面板直接渲染这张表。 */
+  list() {
+    return Object.freeze([...this.records.values()]
+      .sort((left, right) => left.serial - right.serial)
+      .map((entry) => Object.freeze({
+        path: entry.path,
+        state: entry.state,
+        granted: LIVE_STATES.has(entry.state) && !(entry.expires > 0 && this.now() >= entry.expires),
+        mode: entry.mode,
+        expires: entry.expires,
+        calls: entry.calls,
+        denials: entry.denials,
+        reason: entry.reason,
+      })));
+  }
+
+  grantedPaths() {
+    return this.list().filter((entry) => entry.granted).map((entry) => entry.path);
+  }
+
+  snapshot() {
+    return Object.freeze({
+      strict: this.strict,
+      aliases: Object.freeze(Object.fromEntries(this.aliases)),
+      records: Object.freeze([...this.records.values()].map((entry) => Object.freeze({ ...entry }))),
+    });
+  }
+
+  restore(snapshot) {
+    if (!snapshot) return this;
+    this.strict = Boolean(snapshot.strict);
+    this.aliases = new Map(Object.entries(snapshot.aliases ?? {}));
+    this.records = new Map((snapshot.records ?? []).map((entry) => [entry.path, { ...entry }]));
+    return this;
+  }
+
+  note(action, entry, throttled = false) {
+    if (!this.audit) return;
+    if (throttled && entry.denials % 8 !== 1) return;
+    try {
+      this.audit({ kernel: "permissions", action, path: entry.path, state: entry.state, mode: entry.mode, reason: entry.reason ?? null });
+    } catch {
+      // 审计回调异常不得影响内核执行
+    }
+  }
+}
+
+/* ================================================================
+ * 0.6 内核子系统之五：资源内核（Resource Kernel）
+ *
+ * 0.4 的配额散落在策略里（maxDomNodes / maxStyleBytes / maxTotalSteps），
+ * 且只覆盖三样东西。0.6 把它收成一个统一账本：CPU、DOM、effect、
+ * scope、timer、listener、request、stream、worker、storage、memory……
+ * 全都能记账、能限额、能快照，越界抛 JLCQuotaError（ENOSPC_QUOTA）。
+ * ================================================================ */
+
+export const RESOURCE_KINDS = Object.freeze([
+  "cpu", "memory", "dom", "effects", "scopes", "styles", "timers", "listeners",
+  "requests", "streams", "workers", "storage", "tasks", "checkpoints",
+]);
+
+/** 默认限额：0 或不写 = 不限（由策略档给上限）。 */
+export const DEFAULT_RESOURCE_LIMITS = Object.freeze({
+  cpu: 0,
+  memory: 0,
+  dom: 0,
+  effects: 0,
+  scopes: 0,
+  styles: 0,
+  timers: 0,
+  listeners: 0,
+  requests: 0,
+  streams: 0,
+  workers: 4,
+  storage: 0,
+  tasks: 0,
+  checkpoints: 8,
+});
+
+export class ResourceKernel {
+  constructor(runtime, limits = {}) {
+    this.runtime = runtime;
+    this.limits = { ...DEFAULT_RESOURCE_LIMITS, ...limits };
+    this.counters = new Map();
+    this.peaks = new Map();
+    this.events = [];
+    this.maxEvents = 64;
+  }
+
+  limitOf(kind) {
+    const value = Number(this.limits[kind] ?? 0);
+    return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  }
+
+  setLimit(kind, value) {
+    if (!RESOURCE_KINDS.includes(kind)) throw new JLCRuntimeError(`未知资源种类“${kind}”`);
+    this.limits[kind] = Math.max(0, Math.floor(Number(value) || 0));
+    return this;
+  }
+
+  /** 显式计数器（cpu / streams / workers / storage / memory）优先，其余读实时账本。 */
+  derived(kind) {
+    const metrics = this.runtime?.metrics;
+    if (!metrics) return 0;
+    switch (kind) {
+      case "dom": return metrics.nodes;
+      case "effects": return metrics.effects;
+      case "scopes": return metrics.scopes;
+      case "styles": return metrics.styles;
+      case "timers": return metrics.timers;
+      case "listeners": return metrics.listeners;
+      case "requests": return metrics.requests;
+      case "tasks": return this.runtime?.scheduler?.taskCount?.() ?? 0;
+      default: return null;
+    }
+  }
+
+  usageOf(kind) {
+    const derived = this.derived(kind);
+    if (derived != null) return derived;
+    return this.counters.get(kind) ?? 0;
+  }
+
+  peakOf(kind) {
+    return this.peaks.get(kind) ?? this.usageOf(kind);
+  }
+
+  /** 记账 + 越界即抛。这是内核里唯一的配额出口。 */
+  reserve(kind, amount = 1) {
+    if (!RESOURCE_KINDS.includes(kind)) return null;
+    const used = this.usageOf(kind);
+    const limit = this.limitOf(kind);
+    const next = used + amount;
+    if (limit > 0 && next > limit) throw this.quota(kind, used, amount, limit);
+    if (this.derived(kind) == null) {
+      this.counters.set(kind, next);
+      this.peaks.set(kind, Math.max(this.peaks.get(kind) ?? 0, next));
+    } else {
+      this.peaks.set(kind, Math.max(this.peaks.get(kind) ?? 0, next));
+    }
+    return next;
+  }
+
+  release(kind, amount = 1) {
+    const own = this.counters.get(kind);
+    if (own == null) return this.usageOf(kind);
+    const next = Math.max(0, own - amount);
+    this.counters.set(kind, next);
+    return next;
+  }
+
+  quota(kind, used, amount, limit) {
+    const error = new JLCQuotaError(
+      `资源 ${kind} 用量 ${used}${amount > 1 ? ` + ${amount}` : ""} 超过配额 ${kind}=${limit}（ENOSPC_QUOTA）`,
+    );
+    error.resource = kind;
+    error.limit = limit;
+    error.used = used;
+    this.note({ kind, used, limit, action: "quota" });
+    return error;
+  }
+
+  /** 单一资源视图：宿主监控面板直接用。 */
+  usage() {
+    const view = {};
+    for (const kind of RESOURCE_KINDS) {
+      const used = this.usageOf(kind);
+      const limit = this.limitOf(kind);
+      if (used === 0 && limit === 0 && !this.counters.has(kind)) continue;
+      view[kind] = Object.freeze({
+        used,
+        limit,
+        peak: this.peakOf(kind),
+        ratio: limit > 0 ? used / limit : 0,
+      });
+    }
+    return Object.freeze(view);
+  }
+
+  totals() {
+    return Object.freeze({
+      events: this.events.length,
+      exceeded: this.events.filter((event) => event.action === "quota").length,
+    });
+  }
+
+  note(event) {
+    this.events.push({ at: Date.now(), ...event });
+    if (this.events.length > this.maxEvents) this.events.shift();
+    const audit = this.runtime?.policy?.audit;
+    if (audit) {
+      try {
+        audit({ kernel: "resources", ...event });
+      } catch {
+        // 忽略审计回调异常
+      }
+    }
+  }
+
+  snapshot() {
+    return Object.freeze({
+      counters: Object.freeze(Object.fromEntries(this.counters)),
+      limits: Object.freeze({ ...this.limits }),
+    });
+  }
+
+  restore(snapshot) {
+    if (!snapshot) return this;
+    this.counters = new Map(Object.entries(snapshot.counters ?? {}));
+    this.limits = { ...this.limits, ...(snapshot.limits ?? {}) };
+    return this;
+  }
+}
+
+/* ================================================================
+ * 0.6 内核子系统之六：运行时检查点（Checkpoint / Rollback）
+ *
+ * fault: "rollback" 与 handle.rollback() 的落点。检查点捕获的是
+ * 「可变状态」：全局 signal（state / derive / resource 快照）、白名单里的
+ * 只读信号、权限与资源账本、调度器尚未派发的队列、组件树重放指令。
+ * DOM 不拍照，而是靠 scope 重建 + 视图重跑回到一致状态——这就是
+ * 「状态快照 + 结构重放」而不是「深拷贝 DOM」。
+ * ================================================================ */
+
+export class CheckpointStore {
+  constructor(runtime, { limit = 8 } = {}) {
+    this.runtime = runtime;
+    this.limit = Math.max(1, limit);
+    this.entries = new Map();
+    this.serial = 0;
+  }
+
+  capture(label, extra = null) {
+    const runtime = this.runtime;
+    if (!runtime || runtime.destroyed) return null;
+    const signals = Object.create(null);
+    for (const [name, slot] of runtime.globals?.names ?? []) {
+      const binding = runtime.globals.bindings[slot];
+      if (binding?.kind === "signal" && binding.signal.writable) signals[name] = binding.signal.value;
+    }
+    const entry = Object.freeze({
+      label: String(label ?? `cp-${this.serial + 1}`),
+      serial: (this.serial += 1),
+      at: Date.now(),
+      signals: Object.freeze(signals),
+      signalNames: Object.freeze(Object.keys(signals)),
+      permissions: runtime.permissions?.snapshot?.() ?? null,
+      resources: runtime.resources?.snapshot?.() ?? null,
+      faultCounts: runtime.metrics ? Object.freeze({ faults: runtime.metrics.faults, cycles: runtime.metrics.cycles }) : null,
+      meta: extra ? Object.freeze({ ...extra }) : null,
+    });
+    this.entries.set(entry.label, entry);
+    if (this.entries.size > this.limit) {
+      const oldest = [...this.entries.values()].sort((left, right) => left.serial - right.serial)[0];
+      if (oldest) this.entries.delete(oldest.label);
+    }
+    return entry;
+  }
+
+  /** 回滚：恢复 signal 值（在有界批次里触发重渲染），并返回被恢复的检查点。 */
+  restore(label) {
+    const runtime = this.runtime;
+    const entry = this.entries.get(String(label));
+    if (!entry || !runtime || runtime.destroyed) return null;
+    runtime.permissions?.restore?.(entry.permissions);
+    runtime.resources?.restore?.(entry.resources);
+    runtime.transaction(() => {
+      for (const name of entry.signalNames) {
+        const binding = runtime.globals?.resolve?.(name);
+        if (binding?.kind === "signal" && binding.signal.writable) binding.signal.set(sanitizeValue(entry.signals[name]), true);
+      }
+    });
+    return entry;
+  }
+
+  list() {
+    return Object.freeze([...this.entries.values()].map((entry) => Object.freeze({
+      label: entry.label,
+      at: entry.at,
+      serial: entry.serial,
+      signals: entry.signalNames.length,
+      meta: entry.meta,
+    })));
+  }
+
+  drop(label) {
+    return this.entries.delete(String(label));
+  }
+
+  clear() {
+    this.entries.clear();
+  }
 }
 
 /* ================================================================
@@ -712,12 +1497,14 @@ class Signal {
 
 class Scope {
   constructor(runtime, parent = null, label = "scope") {
+    runtime.resources?.reserve("scopes");
     this.runtime = runtime;
     this.parent = parent;
     this.label = label;
     this.children = new Set();
     this.disposables = new Set();
     this.disposed = false;
+    this.replay = null; // 组件级重启（fault: "restart"）的重放钩子
     if (parent) parent.children.add(this);
     runtime.metrics.scopes += 1;
   }
@@ -775,6 +1562,7 @@ class Scope {
 
 class Effect {
   constructor(runtime, scope, callback, priority = 1, signal = null) {
+    runtime.resources?.reserve("effects");
     this.runtime = runtime;
     this.scope = scope;
     this.callback = callback;
@@ -820,8 +1608,10 @@ class Effect {
     try {
       this.callback();
     } catch (error) {
+      if (isYieldSignal(error)) throw error;
       if (this.runtime.initializing) throw error;
-      this.runtime.reportError(error);
+      // 0.6：effect 级错误走故障阶梯——degrade / recover / restart / rollback / stop
+      this.runtime.handleFault(error, { phase: "effect", scope: this.scope, effect: this });
     } finally {
       ACTIVE_EFFECT = previous;
     }
@@ -840,71 +1630,272 @@ class Effect {
   }
 }
 
+/* ================================================================
+ * 0.6 调度器 v2（Priority Scheduler + Cooperative Tasks）
+ *
+ * 0.4：单一队列 + 优先级数字排序 + 每 effect 错误边界。
+ * 0.6：在其上叠加任务层——每个任务带通道（P0..P7）、预算、截止时间，
+ *      预算耗尽时 VM 可以「保存状态 → 让出 → 下一轮恢复」，
+ *      而不是把整个实例判死刑。
+ *
+ * 兼容性：queue / pending / flushing / enqueue() 的旧语义原样保留，
+ * 0.4 的 effect 调度路径（含 1000 轮循环保护）走的还是同一条路。
+ * ================================================================ */
+
+let NEXT_TASK_ID = 1;
+
+/** 协作式让出信号。它不是错误，是内核的控制流：捕获方必须原样续跑。 */
+export class JLCYieldSignal extends Error {
+  constructor(info = {}) {
+    super(`JLC VM 让出执行权（${info.reason ?? "budget"}）`);
+    this.name = "JLCYieldSignal";
+    this.isYieldSignal = true;
+    this.info = info;
+  }
+}
+
+export function isYieldSignal(value) {
+  return Boolean(value?.isYieldSignal);
+}
+
+/** 预算越界：不可续跑的执行路径超出 CPU 预算（内核的 EAGAIN / budget）。 */
+export class JLCBudgetError extends JLCRuntimeError {
+  constructor(message, info = {}) {
+    super(message);
+    this.name = "JLCBudgetError";
+    this.code = "E_BUDGET";
+    this.taskKind = info.kind ?? null;
+    this.steps = info.steps ?? 0;
+    this.budget = info.budget ?? 0;
+  }
+}
+
 class Scheduler {
   constructor(runtime) {
     this.runtime = runtime;
     this.queue = new Set();
+    this.tasks = [];
     this.pending = false;
     this.flushing = false;
+    this.current = null;
+    this.seq = 0;
   }
 
+  taskCount() {
+    return this.queue.size + this.tasks.length;
+  }
+
+  /** 0.4 兼容入口：effect 去重 + 微任务合并派发。 */
   enqueue(effect) {
     if (effect.disposed || effect.queued) return;
     effect.queued = true;
     this.queue.add(effect);
-    if (!this.pending && this.runtime.batchDepth === 0) {
-      this.pending = true;
-      queueMicrotask(() => {
-        if (!this.runtime) return;
-        this.pending = false;
-        this.flush();
-      });
+    this.wake();
+  }
+
+  /**
+   * 0.6 任务入口。
+   * @param {object} task
+   * @param {string} [task.kind]      任务种类（决定默认通道）
+   * @param {number|string} [task.priority]
+   * @param {number} [task.budget]    指令预算（0 = 无限）
+   * @param {number} [task.deadline]  绝对时间戳（ms）
+   * @param {boolean} [task.sliceable] 是否允许协作式让出
+   * @param {Function} task.run
+   * @param {Function} [task.then]    续跑完成后收尾（承接 JS 收尾步骤）
+   */
+  submit(task) {
+    if (!this.runtime || this.runtime.destroyed || typeof task?.run !== "function") return null;
+    const kind = task.kind ?? "task";
+    const normalized = {
+      id: NEXT_TASK_ID++,
+      seq: (this.seq += 1),
+      kind,
+      label: String(task.label ?? kind),
+      priority: normalizePriority(task.priority ?? TASK_PRIORITY[kind] ?? PRIORITY.EFFECT),
+      budget: Math.max(0, Number(task.budget ?? this.runtime.options.maxSliceSteps ?? 0) || 0),
+      deadline: Math.max(0, Number(task.deadline ?? 0) || 0),
+      sliceable: Boolean(task.sliceable),
+      yieldToHost: Boolean(task.yieldToHost),
+      resumable: task.resumable !== false,
+      run: task.run,
+      then: typeof task.then === "function" ? task.then : null,
+      settle: typeof task.settle === "function" ? task.settle : null,
+      scope: task.scope ?? null,
+      submitted: Date.now(),
+      resumed: Boolean(task.resumed),
+    };
+    this.tasks.push(normalized);
+    this.wake();
+    return normalized;
+  }
+
+  /** 测试与宿主诊断用：当前任务视图（不含闭包）。 */
+  pendingTasks() {
+    return Object.freeze(this.tasks.map((task) => Object.freeze({
+      id: task.id, kind: task.kind, label: task.label, priority: task.priority,
+      budget: task.budget, deadline: task.deadline, sliceable: task.sliceable,
+    })));
+  }
+
+  wake() {
+    if (this.pending || this.runtime?.batchDepth > 0 || this.runtime?.destroyed) return;
+    this.pending = true;
+    const tick = () => {
+      if (!this.runtime || this.runtime.destroyed) return;
+      this.pending = false;
+      this.flush();
+    };
+    // yieldToHost：让出一帧，让浏览器有机会绘制（大列表分片渲染用）。
+    if (this.tasks.some((task) => task.yieldToHost && !task.resumed)) {
+      const host = this.runtime.window;
+      if (host?.requestAnimationFrame) host.requestAnimationFrame(() => tick());
+      else (host?.setTimeout ?? setTimeout)(tick, 0);
+      return;
     }
+    queueMicrotask(tick);
+  }
+
+  takeTask() {
+    let best = 0;
+    let chosen = this.tasks[0];
+    for (let index = 1; index < this.tasks.length; index += 1) {
+      const candidate = this.tasks[index];
+      const better = candidate.priority < chosen.priority
+        || (candidate.priority === chosen.priority && candidate.deadline > 0 && (chosen.deadline === 0 || candidate.deadline < chosen.deadline))
+        || (candidate.priority === chosen.priority && candidate.deadline === chosen.deadline && candidate.seq < chosen.seq);
+      if (better) {
+        best = index;
+        chosen = candidate;
+      }
+    }
+    this.tasks.splice(best, 1);
+    return chosen;
   }
 
   flush() {
-    if (this.flushing || this.runtime.destroyed) return;
+    if (this.flushing || !this.runtime || this.runtime.destroyed) return;
     this.flushing = true;
-    let rounds = 0;
-    const stranded = [];
     try {
-      while (this.queue.size) {
-        if (++rounds > 1000) throw new JLCRuntimeError("响应式更新超过 1000 轮，可能存在循环依赖");
-        const effects = [...this.queue].sort((left, right) => left.priority - right.priority || left.id - right.id);
-        this.queue.clear();
-        for (let index = 0; index < effects.length; index += 1) {
-          const effect = effects[index];
-          effect.queued = false;
-          if (effect.disposed) continue;
-          // 一个 effect 抛错不能连累同批未执行的 effect：剩下的先跑完，错误最后上报。
-          try {
-            effect.run();
-          } catch (error) {
-            stranded.push(error);
-            for (const rest of effects.slice(index + 1)) {
-              try {
-                if (!rest.disposed) rest.run();
-              } catch (nested) {
-                stranded.push(nested);
-              }
-            }
-            throw error;
-          }
-        }
-      }
-    } catch (error) {
-      for (const effect of this.queue) effect.queued = false;
-      this.queue.clear();
-      for (const strandedError of stranded) this.runtime.reportError(strandedError);
-      this.runtime.reportError(error);
+      this.drain();
     } finally {
       this.flushing = false;
     }
   }
 
+  /** 同步跑干：effect 批处理 → 任务队列，直到两个队列都空。 */
+  drain() {
+    const runtime = this.runtime;
+    let rounds = 0;
+    const stranded = [];
+    try {
+      while (this.queue.size || this.tasks.length) {
+        if (++rounds > 1000) throw new JLCRuntimeError("响应式更新超过 1000 轮，可能存在循环依赖");
+        while (this.queue.size && !runtime.destroyed) {
+          const effects = [...this.queue].sort((left, right) => left.priority - right.priority || left.id - right.id);
+          this.queue.clear();
+          for (let index = 0; index < effects.length; index += 1) {
+            const effect = effects[index];
+            effect.queued = false;
+            if (effect.disposed) continue;
+            // 一个 effect 抛错不能连累同批未执行的 effect：剩下的先跑完，错误最后上报。
+            try {
+              effect.run();
+            } catch (error) {
+              if (isYieldSignal(error)) {
+                // 协作式让出：本 effect 已切片的机器状态由续跑任务接手，
+                // 同批其余 effect 照常执行（它们本来就与该 effect 无关）。
+                this.adoptSuspension(error, effect);
+                continue;
+              }
+              stranded.push(error);
+              for (const rest of effects.slice(index + 1)) {
+                try {
+                  if (!rest.disposed) rest.run();
+                } catch (nested) {
+                  if (isYieldSignal(nested)) {
+                    this.adoptSuspension(nested, rest);
+                    continue;
+                  }
+                  stranded.push(nested);
+                }
+              }
+              throw error;
+            }
+          }
+        }
+        if (runtime.destroyed) return;
+        const task = this.tasks.length ? this.takeTask() : null;
+        if (task) this.runTask(task);
+      }
+    } catch (error) {
+      for (const effect of this.queue) effect.queued = false;
+      this.queue.clear();
+      for (const strandedError of stranded) runtime.reportError(strandedError);
+      if (isYieldSignal(error)) {
+        this.adoptSuspension(error, null);
+        return;
+      }
+      runtime.handleFault(error, { phase: "scheduler" });
+    }
+  }
+
+  runTask(task) {
+    const runtime = this.runtime;
+    const previous = this.current;
+    this.current = task;
+    runtime.counters.tasks += 1;
+    try {
+      const value = typeof task.run === "function" ? task.run(task) : undefined;
+      this.current = previous;
+      if (task.then) task.then(value, null, task);
+      task.settle?.(null, value);
+      return value;
+    } catch (error) {
+      this.current = previous;
+      if (isYieldSignal(error)) {
+        this.adoptSuspension(error, task);
+        return undefined;
+      }
+      runtime.handleFault(error, { phase: "task", task });
+      task.settle?.(error, null);
+      return undefined;
+    }
+  }
+
+  /** 把挂起的机器状态包成续跑任务：让出一轮，保证其它通道先跑。 */
+  adoptSuspension(signal, owner) {
+    const runtime = this.runtime;
+    const machine = runtime?.machine;
+    if (!runtime || runtime.destroyed || !machine?.suspended) return null;
+    const info = signal.info ?? {};
+    const parent = owner && typeof owner === "object" && "priority" in owner ? owner : null;
+    const priority = normalizePriority(
+      info.resumePriority ?? (parent ? Math.min(PRIORITY.IDLE, parent.priority + 1) : PRIORITY.EFFECT),
+      PRIORITY.EFFECT,
+    );
+    const then = parent?.then ?? null;
+    const task = this.submit({
+      kind: parent?.kind ?? info.kind ?? "resume",
+      label: `resume:${parent?.label ?? info.kind ?? "vm"}`,
+      priority,
+      budget: parent?.budget ?? runtime.options.maxSliceSteps ?? 0,
+      deadline: info.deadline ?? parent?.deadline ?? 0,
+      sliceable: true,
+      resumed: true,
+      run: () => machine.resumeSuspended(),
+      then: then ? (value, _error, self) => then(value, null, self) : null,
+      settle: parent?.settle ?? null,
+    });
+    runtime.counters.yields += 1;
+    return task;
+  }
+
   clear() {
     for (const effect of this.queue) effect.queued = false;
     this.queue.clear();
+    this.tasks.length = 0;
+    this.current = null;
     this.runtime = null;
   }
 }
@@ -1219,9 +2210,20 @@ class ByteReader {
  * .jbc 序列化 / 反序列化
  * ================================================================ */
 
-const SECTION = { POOL: 1, GLOBALS: 2, FUNCS: 3, ACTIONS: 4, DECLS: 5, VIEW: 6, META: 7, MANIFEST: 8 };
+const SECTION = {
+  POOL: 1, GLOBALS: 2, FUNCS: 3, ACTIONS: 4, DECLS: 5, VIEW: 6, META: 7, MANIFEST: 8,
+  // ---- ABI v3 新增段（v1/v2 模块不写这些段，解码器按缺省处理）----
+  CAPABILITIES: 9, // 能力图路径清单（与指令流交叉核对）
+  RESOURCES: 10,   // 资源清单：这个模块会用到哪些资源、静态上界是多少
+  FLAGS: 11,       // 模块标志位：可重放 / 含网络 / 含定时器 / 含 frame ...
+};
+
+/** 资源清单种类（与 RESOURCE_KINDS 对齐的稳定编码，落进 .jbc 后不能改号）。 */
+const RESOURCE_CODES = Object.freeze({ dom: 1, effects: 2, styles: 3, timers: 4, requests: 5, scopes: 6, listeners: 7, workers: 8, storage: 9, streams: 10 });
+const RESOURCE_CODE_NAMES = Object.freeze(["", ...Object.keys(RESOURCE_CODES)]);
+export const MODULE_FLAGS = Object.freeze({ deterministic: 1, network: 2, timers: 4, frames: 8, windowEvents: 16, workers: 32 });
 const POOL_NULL = 0, POOL_TRUE = 1, POOL_FALSE = 2, POOL_NUM = 3, POOL_STR = 4;
-const REQUIREMENT_KINDS = ["tag", "frame", "url", "property", "attribute", "host", "window", "style", "capability"];
+export const REQUIREMENT_KINDS = ["tag", "frame", "url", "property", "attribute", "host", "window", "style", "capability"];
 const REQUIREMENT_KIND_CODES = Object.fromEntries(REQUIREMENT_KINDS.map((name, index) => [name, index + 1]));
 const REQUIREMENT_KIND_NAMES = ["", ...REQUIREMENT_KINDS];
 const DECL_KIND = { state: 0, derive: 1, resource: 2, style: 3 };
@@ -1315,6 +2317,37 @@ export function encodeModule(module) {
     }
     sections.push([SECTION.MANIFEST, manifest]);
   }
+  // ---- ABI v3：能力清单 / 资源清单 / 标志位 ----
+  {
+    const analysis = moduleAnalysis(module) ?? analyzeModule(module, { mode: "normal" });
+    const capabilities = new ByteWriter();
+    const paths = analysis.capabilityPaths ?? [];
+    capabilities.u16(paths.length);
+    for (const path of paths) capabilities.str(path);
+    sections.push([SECTION.CAPABILITIES, capabilities]);
+
+    const resources = new ByteWriter();
+    const manifest = resourceManifestOf(module, analysis);
+    const entries = Object.entries(manifest).filter(([kind]) => RESOURCE_CODES[kind] != null);
+    resources.u16(entries.length);
+    for (const [kind, amount] of entries) {
+      resources.u8(RESOURCE_CODES[kind]);
+      resources.u32(Math.max(0, Math.min(0xffffffff, Math.floor(amount))));
+    }
+    sections.push([SECTION.RESOURCES, resources]);
+
+    const flags = new ByteWriter();
+    let bits = 0;
+    if (analysis.determinism?.deterministic) bits |= MODULE_FLAGS.deterministic;
+    for (const requirement of module.requirements ?? []) {
+      if (requirement.key === "host:http") bits |= MODULE_FLAGS.network;
+      if (requirement.key === "host:timer") bits |= MODULE_FLAGS.timers;
+      if (requirement.kind === "frame") bits |= MODULE_FLAGS.frames;
+      if (requirement.kind === "window") bits |= MODULE_FLAGS.windowEvents;
+    }
+    flags.u32(bits);
+    sections.push([SECTION.FLAGS, flags]);
+  }
 
   writer.u16(sections.length);
   for (const [id, payload] of sections) {
@@ -1325,6 +2358,52 @@ export function encodeModule(module) {
     writer.raw(bytes);
   }
   return writer.toUint8Array();
+}
+
+/**
+ * 资源清单的静态上界：验证器数一遍指令流，给出「这个模块最多用多少资源」。
+ * 这是给宿主看的需求声明，不是运行时账本（两者在 describe() 里分开呈现）。
+ */
+export function resourceManifestOf(module, analysis = null) {
+  const manifest = Object.create(null);
+  let dom = 0;
+  let timers = 0;
+  let effects = 0;
+  let styles = 0;
+  for (const func of module.functions) {
+    let ip = 0;
+    const code = func.code;
+    while (ip < code.length) {
+      const opcode = code[ip];
+      const spec = OP_SPEC[opcode];
+      if (!spec) break;
+      ip += 1;
+      let first = null;
+      for (const descriptor of spec.operands) {
+        if (descriptor === "B") { if (first == null) first = code[ip]; ip += 1; }
+        else if (descriptor === "I") ip += 4;
+        else { const value = (code[ip] << 8) | code[ip + 1]; if (first == null) first = value; ip += 2; }
+      }
+      if (opcode === OP.ELEM) dom += 1;
+      else if (opcode === OP.TIMER) timers += 1;
+      else if (opcode === OP.WHEN || opcode === OP.EACH) effects += 1;
+    }
+  }
+  for (const declaration of module.declarations) {
+    if (declaration.kind === "style") styles += 1;
+    if (declaration.kind === "resource") effects += 1;
+    if (declaration.kind === "derive") effects += 1;
+  }
+  if (dom) manifest.dom = dom;
+  if (effects) manifest.effects = effects;
+  if (timers) manifest.timers = timers;
+  if (styles) manifest.styles = styles;
+  const requests = (module.declarations ?? []).filter((declaration) => declaration.kind === "resource").length;
+  if (requests) manifest.requests = requests;
+  const paths = analysis?.capabilityPaths ?? [];
+  if (paths.some((path) => path.startsWith("compute.worker"))) manifest.workers = 1;
+  if (paths.some((path) => path.startsWith("storage"))) manifest.storage = 1;
+  return manifest;
 }
 
 function poolIndexOf(module, text) {
@@ -1351,6 +2430,7 @@ export function decodeModule(bytes, { sourceName = "<jbc>", verify = true } = {}
     const length = reader.u32();
     reader.need(length);
     if (payloads.has(id)) throw new JLCVerifyError(`段 ${id} 重复出现`, sourceName);
+    // 0.6：未知段原样跳过——前向兼容比「拒绝一切未知」更适合分布式分发。
     payloads.set(id, data.subarray(reader.ip, reader.ip + length));
     reader.ip += length;
   }
@@ -1446,6 +2526,32 @@ export function decodeModule(bytes, { sourceName = "<jbc>", verify = true } = {}
     module.app = String(module.pool[meta.u16()] ?? "App");
     module.sourceName = meta.str();
   }
+  if (payloads.has(SECTION.CAPABILITIES)) {
+    const capabilities = new ByteReader(payloads.get(SECTION.CAPABILITIES), sourceName);
+    const count = capabilities.u16();
+    const paths = [];
+    for (let index = 0; index < count; index += 1) {
+      const path = capabilities.str();
+      if (!isCapabilityPath(path)) throw new JLCVerifyError(`能力路径“${path}”不在内核能力图中`, sourceName);
+      paths.push(path);
+    }
+    module.declaredCapabilities = Object.freeze(paths);
+  }
+  if (payloads.has(SECTION.RESOURCES)) {
+    const resources = new ByteReader(payloads.get(SECTION.RESOURCES), sourceName);
+    const count = resources.u16();
+    const manifest = Object.create(null);
+    for (let index = 0; index < count; index += 1) {
+      const kind = RESOURCE_CODE_NAMES[resources.u8()];
+      const amount = resources.u32();
+      if (!kind) continue;
+      manifest[kind] = amount;
+    }
+    module.resourceManifest = Object.freeze(manifest);
+  }
+  if (payloads.has(SECTION.FLAGS)) {
+    module.flags = new ByteReader(payloads.get(SECTION.FLAGS), sourceName).u32();
+  }
   if (payloads.has(SECTION.MANIFEST)) {
     const manifest = new ByteReader(payloads.get(SECTION.MANIFEST), sourceName);
     const count = manifest.u16();
@@ -1485,6 +2591,9 @@ function freezeModule(module) {
     Object.freeze(module.requirements);
   }
   if (Array.isArray(module.declaredRequirements)) Object.freeze(module.declaredRequirements);
+  if (Array.isArray(module.declaredCapabilities)) Object.freeze(module.declaredCapabilities);
+  if (Array.isArray(module.capabilityPaths)) Object.freeze(module.capabilityPaths);
+  if (module.resourceManifest && !Object.isFrozen(module.resourceManifest)) Object.freeze(module.resourceManifest);
   return module;
 }
 
@@ -1494,7 +2603,7 @@ function freezeModule(module) {
  * 操作数栈深度一致性、元素游标配平 —— 等价 JVM 的 class 校验。
  * ================================================================ */
 
-export function verifyModule(module, sourceName = "<jbc>") {
+export function verifyModule(module, sourceName = "<jbc>", options = {}) {
   const fail = (message) => { throw new JLCVerifyError(message, sourceName); };
 
   if (!module || module.format !== "jlc-bytecode") fail("不是 JLC 字节码模块");
@@ -1641,7 +2750,7 @@ export function verifyModule(module, sourceName = "<jbc>") {
         at = next;
       }
     }
-    func.maxStack = maxStack;
+    if (!Object.isFrozen(func)) func.maxStack = maxStack;
   });
 
   // 结构引用检查。
@@ -1675,7 +2784,494 @@ export function verifyModule(module, sourceName = "<jbc>") {
     const missing = [...actual].filter((key) => !declared.includes(key));
     if (missing.length) fail(`申报清单与指令流不一致，漏报接口：${missing.join(", ")}`);
   }
+
+  // ---- Pass 6 / 7 / 9 / 10 / 11（0.6 多趟验证）----
+  const mode = options.mode ?? "normal";
+  const analysis = analyzeModule(module, { mode });
+  attachAnalysis(module, analysis);
+  // ABI v3：申报的能力清单只能少报不能多报——与接口清单同一条铁律。
+  if (module.declaredCapabilities) {
+    const actualPaths = new Set(analysis.capabilityPaths);
+    const missing = module.declaredCapabilities.filter((path) => !actualPaths.has(path));
+    if (missing.length) fail(`申报能力与指令流不一致，漏报接口：${missing.join(", ")}`);
+  }
+  if (module.resourceManifest) {
+    const actualManifest = resourceManifestOf(module, analysis);
+    const missing = Object.keys(module.resourceManifest).filter((kind) => !(kind in actualManifest));
+    // 资源清单只做「上界合理性」检查：申报了却完全用不到的资源视为伪造。
+    for (const kind of missing) {
+      if (!(kind in actualManifest)) fail(`资源清单申报了未使用的资源“${kind}”`);
+    }
+  }
+  if (!Object.isFrozen(module)) {
+    module.capabilityPaths = analysis.capabilityPaths;
+    module.resourceManifest = { ...resourceManifestOf(module, analysis), ...(module.resourceManifest ?? {}) };
+  }
+  if (analysis.errors.length) fail(`多趟验证失败：${analysis.errors[0]}`);
+  if (options.report) return analysis;
   return module;
+}
+
+/* ================================================================
+ * 0.6 多趟验证器（Multi-pass Verifier）
+ *
+ * 0.4 的 verifyModule 是一条流水线：线性扫描 → 栈深度工作表 → 结构引用。
+ * 0.6 把它显式拆成 11 趟，并在原有「硬失败」之外增加两个只读分析：
+ *
+ *   Pass 6  CFG        建立控制流图：不可达块、非法跳转、循环回边
+ *   Pass 7  抽象栈类型  只对「确定类型」报警（数组当函数调用这种），
+ *                      默认 advisory，mode: "strict" 时升级为载入失败
+ *   Pass 11 确定性      判断模块是否可重放（有没有 timer / http / 窗口事件）
+ *
+ * 副产品是 module.analysis：检查器、Profiler、调试器都读这一份数据。
+ * ================================================================ */
+
+export const VERIFIER_PASSES = Object.freeze([
+  Object.freeze({ id: 1, name: "header", label: "魔数 / ABI / 版本 / 段结构" }),
+  Object.freeze({ id: 2, name: "pool", label: "常量池类型与字符串引用" }),
+  Object.freeze({ id: 3, name: "opcode", label: "操作码合法性与函数类型约束" }),
+  Object.freeze({ id: 4, name: "operand", label: "操作数边界与索引范围" }),
+  Object.freeze({ id: 5, name: "stack", label: "操作数栈深度一致性（工作表算法）" }),
+  Object.freeze({ id: 6, name: "cfg", label: "控制流图：跳转边界 / 不可达 / 循环回边" }),
+  Object.freeze({ id: 7, name: "types", label: "抽象栈类型（advisory，strict 档升级为失败）" }),
+  Object.freeze({ id: 8, name: "structure", label: "函数 / action / 声明 / 视图引用完整性" }),
+  Object.freeze({ id: 9, name: "manifest", label: "能力清单与指令流交叉核对" }),
+  Object.freeze({ id: 10, name: "security", label: "安全不变量：硬限制 / 原型逃逸" }),
+  Object.freeze({ id: 11, name: "determinism", label: "确定性：可重放性判定" }),
+]);
+
+const TYPE_UNKNOWN = "unknown";
+
+/** 抽象类型格：常量池值 → 抽象类型。 */
+function typeOfPoolValue(value) {
+  if (value === null) return "null";
+  if (typeof value === "boolean") return "bool";
+  if (typeof value === "number") return "number";
+  if (typeof value === "string") return "string";
+  return TYPE_UNKNOWN;
+}
+
+function mergeType(left, right) {
+  if (left === right) return left;
+  if (left === TYPE_UNKNOWN || right === TYPE_UNKNOWN) return TYPE_UNKNOWN;
+  return TYPE_UNKNOWN;
+}
+
+const CALLABLE_TYPES = new Set(["function", TYPE_UNKNOWN]);
+
+/**
+ * 控制流图：把指令流切成基本块，给出边、不可达块与循环回边。
+ * 这是 Pass 6 的唯一数据源，也是 vm.graph() 渲染的内容。
+ */
+export function buildCFG(func, module = null) {
+  const code = func.code;
+  const instructionAt = new Map();
+  const leaders = new Set([0]);
+  let ip = 0;
+  let truncated = false;
+  // Pass A：线性解码，记录每条指令以及「块首」候选。
+  // 块首 = 函数入口 ∪ 跳转目标 ∪ 终结指令的下一条。
+  while (ip < code.length) {
+    const start = ip;
+    const opcode = code[ip];
+    const spec = OP_SPEC[opcode];
+    if (!spec) {
+      instructionAt.set(start, { start, end: start + 1, opcode, name: `UNKNOWN(0x${opcode.toString(16)})`, values: [], jump: null });
+      leaders.add(start + 1);
+      ip += 1;
+      continue;
+    }
+    ip += 1;
+    const values = [];
+    for (const descriptor of spec.operands) {
+      if (descriptor === "B") {
+        if (ip >= code.length) { truncated = true; break; }
+        values.push(code[ip]);
+        ip += 1;
+      } else if (descriptor === "I") {
+        if (ip + 4 > code.length) { truncated = true; break; }
+        values.push(((code[ip] << 24) | (code[ip + 1] << 16) | (code[ip + 2] << 8) | code[ip + 3]) | 0);
+        ip += 4;
+      } else {
+        if (ip + 2 > code.length) { truncated = true; break; }
+        values.push((code[ip] << 8) | code[ip + 1]);
+        ip += 2;
+      }
+    }
+    const jump = spec.jump ?? null;
+    instructionAt.set(start, { start, end: ip, opcode, values, name: spec.name, jump });
+    if (jump) {
+      const target = jump === "fornext" ? values[3] : jump === "return" ? null : values[0];
+      if (target != null) leaders.add(target);
+      if (jump !== "return") leaders.add(ip);
+    }
+  }
+  leaders.add(code.length);
+
+  // Pass B：按块首切基本块。
+  const starts = [...leaders]
+    .filter((offset) => offset <= code.length && (offset === code.length || instructionAt.has(offset)))
+    .sort((left, right) => left - right);
+  const blocks = [];
+  const indexOfStart = new Map();
+  for (const start of starts) {
+    if (start === code.length) continue;
+    const block = { id: blocks.length, start, end: start, instructions: [], successors: [], kind: "fallthrough", terminator: null };
+    indexOfStart.set(start, block.id);
+    let cursor = start;
+    while (cursor < code.length) {
+      const instruction = instructionAt.get(cursor);
+      if (!instruction) break;
+      block.instructions.push(instruction);
+      block.end = instruction.end;
+      if (instruction.jump) {
+        block.terminator = instruction;
+        break;
+      }
+      cursor = instruction.end;
+      if (leaders.has(cursor)) break; // 下一条已是块首：本块到此为止
+    }
+    blocks.push(block);
+  }
+
+  // Pass C：连边。终结指令决定去向，其余落到紧随其后的块。
+  for (const [index, block] of blocks.entries()) {
+    const terminator = block.terminator;
+    const next = blocks[index + 1] ?? null;
+    if (!terminator) {
+      block.kind = block.end >= code.length ? "exit" : "fallthrough";
+      if (next && next.start === block.end) block.successors.push(next.id);
+      continue;
+    }
+    const { jump, values } = terminator;
+    if (jump === "return") {
+      block.kind = "exit";
+      continue;
+    }
+    const targetOffset = jump === "fornext" ? values[3] : values[0];
+    const target = indexOfStart.get(targetOffset);
+    block.kind = jump === "always" ? "jump" : "branch";
+    if (target != null) block.successors.push(target);
+    else block.successors.push(`orphan:${targetOffset}`);
+    if (jump !== "always" && next && next.start === block.end) block.successors.push(next.id);
+  }
+
+  // Pass D：可达性 + 回边（目标在前的边 = 循环）。
+  const reachable = new Set();
+  const queue = [0];
+  const loopEdges = [];
+  const edges = [];
+  const seen = new Set();
+  while (queue.length) {
+    const id = queue.shift();
+    if (typeof id !== "number" || reachable.has(id)) continue;
+    const block = blocks[id];
+    if (!block) continue;
+    reachable.add(id);
+    for (const successor of block.successors) {
+      if (typeof successor !== "number") continue;
+      const key = `${id}->${successor}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        edges.push(key);
+        const targetBlock = blocks[successor];
+        if (targetBlock && targetBlock.start <= block.start) loopEdges.push(key);
+      }
+      queue.push(successor);
+    }
+  }
+  return {
+    function: func.name,
+    kind: func.kind,
+    blocks,
+    edges,
+    unreachable: blocks.filter((block) => !reachable.has(block.id)).map((block) => ({ id: block.id, start: block.start, end: block.end })),
+    loopEdges,
+    truncated,
+  };
+}
+
+/** Pass 7：抽象栈类型分析——只在「确定类型冲突」时报警。 */
+export function analyzeAbstractStack(func, module, options = {}) {
+  const warnings = [];
+  const code = func.code;
+  const instructionAt = new Map();
+  let ip = 0;
+  while (ip < code.length) {
+    const start = ip;
+    const opcode = code[ip];
+    const spec = OP_SPEC[opcode];
+    if (!spec) break;
+    ip += 1;
+    const values = [];
+    for (const descriptor of spec.operands) {
+      if (descriptor === "B") values.push(code[ip++]);
+      else if (descriptor === "I") { values.push(((code[ip] << 24) | (code[ip + 1] << 16) | (code[ip + 2] << 8) | code[ip + 3]) | 0); ip += 4; }
+      else { values.push((code[ip] << 8) | code[ip + 1]); ip += 2; }
+    }
+    instructionAt.set(start, { start, end: ip, opcode, values });
+  }
+
+  const globalType = (slot) => {
+    const name = module.globalRefs[slot];
+    if (module.actions.some((action) => action.name === name)) return "function";
+    if (module.declarations.some((declaration) => declaration.name === name)) return TYPE_UNKNOWN;
+    return TYPE_UNKNOWN;
+  };
+  const pushTypeOf = (opcode, values) => {
+    switch (opcode) {
+      case OP.CONST: return typeOfPoolValue(module.pool[values[0]]);
+      case OP.CONST_INT: return "number";
+      case OP.CONST_NULL: return "null";
+      case OP.BUILD_ARRAY: return "array";
+      case OP.BUILD_OBJECT: return "object";
+      case OP.GET_GLOBAL: return globalType(values[0]);
+      default: return TYPE_UNKNOWN;
+    }
+  };
+
+  const stackAt = new Map();
+  const worklist = [[0, []]];
+  let guard = 0;
+  while (worklist.length && guard++ < 200_000) {
+    const [offset, incoming] = worklist.pop();
+    if (stackAt.has(offset)) continue;
+    stackAt.set(offset, incoming.slice());
+    let cursor = offset;
+    const stack = incoming.slice();
+    const pop = (count) => { for (let index = 0; index < count; index += 1) stack.pop(); };
+    while (cursor < code.length) {
+      const instruction = instructionAt.get(cursor);
+      if (!instruction) break;
+      const { opcode, values, end } = instruction;
+      if (opcode === OP.CALL) {
+        const argc = values[0];
+        const callee = stack[stack.length - 1 - argc];
+        if (callee != null && !CALLABLE_TYPES.has(callee)) {
+          warnings.push(`${func.name}@${instruction.start}: 调用一个确定的${callee}值（不是函数）`);
+        }
+        pop(argc + 1);
+        stack.push(TYPE_UNKNOWN);
+      } else if (opcode === OP.GET_MEMBER) {
+        const receiver = stack[stack.length - 1];
+        if (receiver === "null") warnings.push(`${func.name}@${instruction.start}: 对确定为空的值取成员`);
+        pop(1);
+        stack.push(TYPE_UNKNOWN);
+      } else if (opcode === OP.FOR_PREP) {
+        stack.push("object"); // 迭代器
+      } else if (opcode === OP.FOR_NEXT) {
+        worklist.push([values[3], stack.slice(0, Math.max(0, stack.length - 1))]);
+      } else if (opcode === OP.NOT || opcode === OP.NEG || opcode === OP.POS) {
+        pop(1);
+        stack.push(TYPE_UNKNOWN);
+      } else if (opcode === OP.DUP) {
+        stack.push(stack[stack.length - 1] ?? TYPE_UNKNOWN);
+      } else {
+        const delta = instructionStackDelta(opcode, values);
+        if (delta < 0) pop(-delta);
+        else if (delta > 0) stack.push(pushTypeOf(opcode, values));
+      }
+
+      let branched = false;
+      if (opcode === OP.RETURN || opcode === OP.RETURN_NULL) break;
+      if (instruction.opcode === OP.JUMP || (OP_SPEC[opcode]?.jump === "always")) {
+        worklist.push([values[0], stack.slice()]);
+        branched = true;
+      } else if (opcode === OP.JUMP_IF_FALSE || opcode === OP.JUMP_IF_TRUE || opcode === OP.JUMP_IF_NONNULL || opcode === OP.JUMP_IF_NULL) {
+        worklist.push([values[0], stack.slice()]);
+      }
+      if (branched) break;
+      cursor = end;
+      if (cursor >= code.length) break;
+      if (stackAt.has(cursor)) break;
+    }
+  }
+  return { warnings: [...new Set(warnings)], visited: stackAt.size };
+}
+/** Pass 11：确定性——决定这个模块能不能被快照重放。 */
+function analyzeDeterminism(module, requirements) {
+  const reasons = [];
+  for (const requirement of requirements) {
+    if (requirement.kind === "host" && requirement.detail === "http") reasons.push("host:http（网络不可重放）");
+    if (requirement.kind === "host" && requirement.detail === "timer") reasons.push("host:timer（时间不可重放）");
+    if (requirement.kind === "window") reasons.push("window:event（窗口事件不可重放）");
+    if (requirement.kind === "frame") reasons.push("frame:iframe（第三方文档不可重放）");
+  }
+  return Object.freeze({ deterministic: reasons.length === 0, reasons: Object.freeze(reasons) });
+}
+
+/** Pass 9：把指令流扫描出的接口映射到能力图路径。 */
+function capabilityPathsOf(requirements) {
+  const paths = new Set();
+  const map = {
+    "host:http": "network.http",
+    "host:navigate": "browser.navigation",
+    "host:timer": "compute.timers",
+    "host:title": "browser.title",
+    "host:favicon": "browser.title",
+    "host:emit": "dom.update",
+    "window:event": "browser.window",
+    "frame:iframe": "dom.create",
+    "frame:srcdoc": "dom.create",
+    "quota:dom": "dom.create",
+    "quota:style": "dom.update",
+    "quota:html": "dom.create",
+  };
+  for (const requirement of requirements) {
+    const mapped = map[requirement.key];
+    if (mapped && isCapabilityPath(mapped)) paths.add(mapped);
+    if (requirement.kind === "capability") {
+      const path = CAPABILITY_ALIASES[requirement.detail];
+      if (path && isCapabilityPath(path)) paths.add(path);
+    }
+  }
+  return [...paths].sort();
+}
+
+/** Pass 10：安全不变量——硬限制与原型逃逸。 */
+function analyzeSecurity(module) {
+  const warnings = [];
+  for (const value of module.pool) {
+    if (typeof value !== "string") continue;
+    const lowered = value.toLowerCase();
+    if (BLOCKED_KEYS.has(lowered) && BLOCKED_KEYS.has(value)) {
+      warnings.push(`常量池出现原型逃逸键“${value}”：内核在任何路径下都不放行`);
+    }
+    for (const prefix of FORBIDDEN_URL_PREFIXES) {
+      if (lowered.startsWith(prefix)) warnings.push(`常量池出现脚本型 URL 前缀“${prefix}”：一律净化`);
+    }
+  }
+  return warnings;
+}
+
+const MODULE_ANALYSIS = new WeakMap();
+
+/** 读取缓存的分析结果（冻结模块也能拿到）。 */
+export function moduleAnalysis(module) {
+  return MODULE_ANALYSIS.get(module) ?? module?.analysis ?? null;
+}
+
+function attachAnalysis(module, analysis) {
+  MODULE_ANALYSIS.set(module, analysis);
+  if (!Object.isFrozen(module)) {
+    module.analysis = analysis;
+    module.warnings = analysis.warnings;
+  }
+  return analysis;
+}
+
+/**
+ * 完整分析：跑 Pass 6 / 7 / 9 / 10 / 11，产出只读分析对象。
+ * 不需要抛错——verifyReport() 决定哪些是硬失败。
+ */
+export function analyzeModule(module, { mode = "normal" } = {}) {
+  const strict = mode === "strict";
+  const warnings = [];
+  const errors = [];
+  const functions = [];
+  for (const func of module.functions) {
+    let cfg = null;
+    try {
+      cfg = buildCFG(func, module);
+    } catch (error) {
+      errors.push(`CFG 构建失败（${func.name}）：${error.message}`);
+      continue;
+    }
+    if (cfg.truncated) errors.push(`CFG 截断（${func.name}）：指令流末尾不完整`);
+    if (cfg.unreachable.length) {
+      const message = `${func.name}: ${cfg.unreachable.length} 个基本块不可达（@${cfg.unreachable.map((block) => block.start).join(", ")}）`;
+      if (strict) errors.push(message);
+      else warnings.push(message);
+    }
+    const types = analyzeAbstractStack(func, module, { strict });
+    for (const warning of types.warnings) {
+      if (strict) errors.push(warning);
+      else warnings.push(warning);
+    }
+    functions.push(Object.freeze({
+      name: func.name,
+      kind: func.kind,
+      maxStack: func.maxStack ?? 0,
+      blocks: cfg.blocks.length,
+      edges: cfg.edges.length,
+      unreachable: cfg.unreachable.length,
+      loops: cfg.loopEdges.length,
+    }));
+  }
+  const requirements = module.requirements ?? [];
+  const security = analyzeSecurity(module);
+  for (const warning of security) warnings.push(warning);
+
+  const declared = module.declaredRequirements ?? null;
+  const actual = requirements.map((item) => item.key);
+  const underReported = declared ? actual.filter((key) => !declared.includes(key)) : [];
+
+  const analysis = Object.freeze({
+    abi: ABI_VERSION,
+    version: module.version,
+    app: module.app,
+    mode,
+    passes: Object.freeze(VERIFIER_PASSES.map((pass) => pass.name)),
+    functions: Object.freeze(functions),
+    warnings: Object.freeze(warnings),
+    errors: Object.freeze(errors),
+    requirements: Object.freeze(actual),
+    declaredRequirements: Object.freeze(declared ?? []),
+    underReported: Object.freeze(underReported),
+    capabilityPaths: Object.freeze(capabilityPathsOf(requirements)),
+    determinism: analyzeDeterminism(module, requirements),
+    security,
+    stats: Object.freeze({
+      functions: module.functions.length,
+      actions: module.actions.length,
+      declarations: module.declarations.length,
+      pool: module.pool.length,
+      globals: module.globalRefs.length,
+      instructions: module.functions.reduce((sum, func) => sum + func.code.length, 0),
+    }),
+  });
+  return analysis;
+}
+
+/**
+ * 结构化验证报告：供工具链（IDE / CI / 检查器）消费，永不抛异常。
+ * `mode: "strict"` 时 advisory 警告升级为失败。
+ */
+export function verifyReport(module, sourceName = "<jbc>", options = {}) {
+  const mode = options.mode ?? "normal";
+  const report = {
+    ok: false,
+    moduleName: sourceName,
+    abi: ABI_VERSION,
+    bytecodeVersion: module?.version ?? 0,
+    mode,
+    passes: [],
+    warnings: [],
+    errors: [],
+    analysis: null,
+  };
+  try {
+    if (module?.verified && moduleAnalysis(module)) {
+      report.ok = true; // 已验证过的冻结模块：直接复用分析结果，不再重跑
+    } else {
+      verifyModule(module, sourceName, { mode });
+      report.ok = true;
+    }
+  } catch (error) {
+    report.errors.push(String(error?.message ?? error));
+  }
+  const analysis = moduleAnalysis(module) ?? analyzeModule(module ?? {}, { mode });
+  report.analysis = analysis;
+  report.warnings = [...analysis.warnings];
+  if (analysis.errors.length) report.errors.push(...analysis.errors);
+  if (report.errors.length) report.ok = false;
+  report.passes = VERIFIER_PASSES.map((pass) => Object.freeze({
+    id: pass.id,
+    name: pass.name,
+    label: pass.label,
+    ok: !report.errors.some((message) => message.includes(pass.name)),
+  }));
+  return Object.freeze(report);
 }
 
 /* ================================================================
@@ -1693,6 +3289,17 @@ export function disassembleModule(module) {
   module.pool.forEach((value, index) => {
     lines.push(`  [${index}] ${typeof value === "string" ? JSON.stringify(value) : String(value)}`);
   });
+  const capabilities = module.capabilityPaths ?? moduleAnalysis(module)?.capabilityPaths ?? [];
+  if (capabilities.length) {
+    lines.push("");
+    lines.push(".capabilities");
+    for (const path of capabilities) lines.push(`  ${path}`);
+  }
+  if (module.resourceManifest && Object.keys(module.resourceManifest).length) {
+    lines.push("");
+    lines.push(".resources");
+    for (const [kind, amount] of Object.entries(module.resourceManifest)) lines.push(`  ${kind} <= ${amount}`);
+  }
   if (requirements.length) {
     lines.push("");
     lines.push(".requires");
@@ -1978,12 +3585,13 @@ function createElement(documentObject, tag, namespace, runtime = null, scope = n
 }
 
 function registerOwnedNode(runtime, scope, node) {
-  runtime.ownedNodes.set(node, scope);
-  const nodes = (runtime.metrics.nodes += 1);
-  const limit = runtime.policy?.maxDomNodes ?? 0;
+  const nodes = runtime.metrics.nodes + 1;
+  const limit = runtime.resources?.limitOf("dom") || runtime.policy?.maxDomNodes || 0;
   if (limit > 0 && nodes > limit) {
     throw new JLCQuotaError(`受管 DOM 节点数 ${nodes} 超过配额 maxDomNodes=${limit}（实例被拒绝继续创建节点）`);
   }
+  runtime.ownedNodes.set(node, scope);
+  runtime.metrics.nodes = nodes;
   scope.own(() => {
     runtime.ownedNodes?.delete(node);
     if (runtime.metrics) runtime.metrics.nodes -= 1;
@@ -2180,6 +3788,8 @@ export function scopeStylesheet(text, scopeSelector, depth = 0) {
 
 const MAX_ACTION_DEPTH = 100;
 const NO_STEP = new Uint8Array(256);
+/** 协作式调度的预算检查粒度：每 N 条指令查一次预算/截止时间（关闭时零开销）。 */
+const SLICE_CHECK_INTERVAL = 512;
 for (const opcode of [OP.NOP, OP.POP, OP.DUP, OP.JUMP, OP.JUMP_IF_FALSE, OP.JUMP_IF_TRUE, OP.JUMP_IF_NULL, OP.RETURN_NULL]) {
   NO_STEP[opcode] = 1;
 }
@@ -2197,6 +3807,77 @@ class Machine {
     this.render = null;
     this.context = null;
     this.actionDepth = 0;
+    // ---- 0.6 协作式调度状态 ----
+    this.dispatchDepth = 0;     // 当前 JS 调用链上有几层 dispatch（1 = 最外层）
+    this.sliceableTask = null;  // 允许被切片的任务：只有它才能触发协作式让出
+    this.suspended = null;      // 挂起现场（frames / stack / context / render / ip）
+    this.entryFrame = null;
+    this.baseFrames = 0;
+  }
+
+  /** 进入可切片窗口（由 Runtime.perform 驱动）：窗口内最外层 dispatch 可以让出。 */
+  beginSlice(task) {
+    const previous = this.sliceableTask;
+    this.sliceableTask = task ?? null;
+    return previous;
+  }
+
+  endSlice(previous) {
+    this.sliceableTask = previous ?? null;
+  }
+
+  /** 最外层 dispatch 的入口记账：续跑要原样恢复这些字段。 */
+  sliceAllowed() {
+    return Boolean(this.sliceableTask) && this.dispatchDepth === 0;
+  }
+
+  /**
+   * 协作式让出：保存 VM 现场 → 抛出控制流信号 → 由调度器在后续任务里续跑。
+   * 只有在「最外层 dispatch + 可切片任务」时才允许；否则升级为预算错误，
+   * 交给故障阶梯（restart / rollback / stop），绝不静默丢状态。
+   */
+  suspend(reason, info = {}, resumable = false) {
+    const task = this.sliceableTask;
+    if (!resumable) {
+      throw new JLCBudgetError(
+        `不可续跑的执行路径超出 ${reason === "deadline" ? "时间" : "指令"}预算（${task?.label ?? "host call"}），已交给故障阶梯`,
+        { kind: task?.kind ?? null, steps: info.spent ?? 0, budget: info.budget ?? 0 },
+      );
+    }
+    this.suspended = {
+      reason,
+      frames: this.frames,
+      stack: this.stack,
+      context: this.context,
+      render: this.render,
+      actionDepth: this.actionDepth,
+      entryFrame: this.entryFrame,
+      baseFrames: this.baseFrames,
+      sliceableTask: task,
+      spent: info.spent ?? 0,
+      budget: info.budget ?? 0,
+      deadline: info.deadline ?? 0,
+      label: task?.label ?? null,
+      kind: task?.kind ?? "task",
+      at: Date.now(),
+    };
+    throw new JLCYieldSignal({ reason, kind: task?.kind ?? "task", label: task?.label ?? null, spent: info.spent ?? 0, budget: info.budget ?? 0, deadline: info.deadline ?? 0 });
+  }
+
+  /** 恢复挂起现场并继续执行到返回（可能再次挂起）。 */
+  resumeSuspended() {
+    const state = this.suspended;
+    if (!state) throw new JLCRuntimeError("VM 没有可恢复的挂起现场");
+    this.suspended = null;
+    this.context = state.context;
+    this.render = state.render;
+    this.actionDepth = state.actionDepth;
+    const previous = this.beginSlice(state.sliceableTask);
+    try {
+      return this.dispatch(state.entryFrame, { resume: true, baseFrames: state.baseFrames });
+    } finally {
+      this.endSlice(previous);
+    }
   }
 
   link(bindings, links) {
@@ -2227,10 +3908,13 @@ class Machine {
     try {
       return this.dispatch(frame);
     } finally {
+      // 挂起时保留现场：frames / stack / context 由续跑任务接手，不能被截断。
+      if (!this.suspended) {
         this.frames.length = framesLength;
-      this.stack.length = stackLength;
-      this.context = previousContext;
-      this.actionDepth = previousDepth;
+        this.stack.length = stackLength;
+        this.context = previousContext;
+        this.actionDepth = previousDepth;
+      }
     }
   }
 
@@ -2245,9 +3929,11 @@ class Machine {
     try {
       return this.runFunction(funcIndex, frame ?? null, scope, { ...options, fresh: false });
     } finally {
-      this.render = savedRender;
-      this.context = savedContext;
-      this.actionDepth = savedDepth;
+      if (!this.suspended) {
+        this.render = savedRender;
+        this.context = savedContext;
+        this.actionDepth = savedDepth;
+      }
     }
   }
 
@@ -2265,10 +3951,12 @@ class Machine {
       this.frames.push(frame);
       return this.dispatch(frame);
     } finally {
-      this.frames.length = framesLength;
-      this.stack.length = stackLength;
-      this.context = savedContext;
-      this.actionDepth = savedDepth;
+      if (!this.suspended) {
+        this.frames.length = framesLength;
+        this.stack.length = stackLength;
+        this.context = savedContext;
+        this.actionDepth = savedDepth;
+      }
     }
   }
 
@@ -2306,6 +3994,7 @@ class Machine {
       delay = minimum;
       notePolicy(runtime, { action: "clamp", kind: "host", detail: "every", message: `every 周期被抬到策略下限 ${minimum}ms` });
     }
+    runtime.resources?.reserve("timers");
     runtime.metrics.timers += 1;
     const chain = this.snapshotChain();
     const task = {
@@ -2328,17 +4017,32 @@ class Machine {
     runtime.scheduleTimer(task);
   }
 
-  dispatch(entryFrame) {
+  dispatch(entryFrame, options = {}) {
     const stack = this.stack;
     const frames = this.frames;
-    const baseFrames = frames.length;
+    const baseFrames = options.baseFrames ?? frames.length;
     const context = this.context;
     const maxSteps = context.runtime.options.maxSteps;
     const maxTotalSteps = context.runtime.options.maxTotalSteps ?? 0;
     const metrics = context.runtime.metrics;
     const steps = context;
-    entryFrame.ip = 0;
+    this.dispatchDepth += 1;
+    const outermost = this.dispatchDepth === 1;
+    if (outermost) {
+      this.entryFrame = entryFrame;
+      this.baseFrames = baseFrames;
+    }
+    // 0.6 协作式切片：只有「最外层 dispatch + 可切片任务」才允许让出。
+    const sliceTask = outermost && this.sliceableTask ? this.sliceableTask : null;
+    const sliceBudget = sliceTask ? Math.max(0, Number(sliceTask.budget) || 0) : 0;
+    const sliceDeadline = sliceTask ? Math.max(0, Number(sliceTask.deadline) || 0) : 0;
+    const sliceEnabled = sliceBudget > 0 || sliceDeadline > 0;
+    const profiling = context.runtime.profiling;
+    let sliceSpent = 0;
+    let sliceCountdown = SLICE_CHECK_INTERVAL;
+    if (!options.resume) entryFrame.ip = 0;
 
+    try {
     outer: while (true) {
       const frame = frames[frames.length - 1];
       const code = frame.func.code;
@@ -2346,7 +4050,18 @@ class Machine {
 
       try {
         while (true) {
+          if (sliceEnabled && --sliceCountdown <= 0) {
+            sliceCountdown = SLICE_CHECK_INTERVAL;
+            sliceSpent += SLICE_CHECK_INTERVAL;
+            if ((sliceBudget > 0 && sliceSpent >= sliceBudget) || (sliceDeadline > 0 && Date.now() >= sliceDeadline)) {
+              frame.ip = ip;
+              this.suspend(sliceBudget > 0 && sliceSpent >= sliceBudget ? "budget" : "deadline", {
+                spent: sliceSpent, budget: sliceBudget, deadline: sliceDeadline,
+              }, sliceTask !== null);
+            }
+          }
           const opcode = code[ip];
+          if (profiling) context.runtime.bumpProfile(frame.func.name);
           if (NO_STEP[opcode] === 0) {
             metrics.cycles += 1;
             if (++steps.steps > maxSteps) throw new JLCRuntimeError("单次动作运算步数超限");
@@ -2614,6 +4329,9 @@ class Machine {
         frame.ip = ip;
       }
     }
+    } finally {
+      this.dispatchDepth -= 1;
+    }
   }
 }
 
@@ -2788,14 +4506,23 @@ const DOM_OPS = {
       if (modifiers & 1 && !options.passive) event.preventDefault();
       if (modifiers & 2) event.stopPropagation();
       const eventFrame = { slots: [eventSnapshot(event)], parent: frame };
-      const eventContext = machine.runtime.context(scope);
+      const eventRuntime = machine.runtime;
+      const eventContext = eventRuntime.context(scope);
       try {
-        machine.runtime.batch(() => {
-          const result = machine.runFunction(funcIndex, eventFrame, scope);
-          if (result?.[CALLABLE]) result.invoke([], eventContext);
+        // 0.6：事件处理器跑在 INPUT 通道上——用户输入永远抢在后台计算前面。
+        eventRuntime.perform({
+          kind: "input",
+          label: `event:${type}`,
+          priority: PRIORITY.INPUT,
+          sliceable: eventRuntime.options.maxSliceSteps > 0,
+          run: () => eventRuntime.batch(() => {
+            const result = machine.runFunction(funcIndex, eventFrame, scope);
+            if (result?.[CALLABLE]) result.invoke([], eventContext);
+          }),
         });
       } catch (error) {
-        machine.runtime.reportError(error);
+        if (isYieldSignal(error)) throw error;
+        eventRuntime.handleFault(error, { phase: "event", scope });
       }
     }, options);
     return ip;
@@ -2818,15 +4545,29 @@ const DOM_OPS = {
     const controlScope = cursor.scope.child("when");
     let branchScope = null;
     let current = null;
-    runtime.effect(controlScope, () => {
+    let forceRebuild = false;
+    const branchEffect = runtime.effect(controlScope, () => {
       const next = Boolean(machine.runFunction(testFunc, frame, controlScope));
-      if (next === current) return;
+      if (next === current && !forceRebuild) return;
+      forceRebuild = false;
       branchScope?.dispose();
       clearBetween(start, end);
       branchScope = controlScope.child(next ? "when:yes" : "when:no");
       machine.runView(next ? yesFunc : noFunc, parent, end, branchScope, frame, namespace);
       current = next;
     });
+    // 组件级重启（fault: "restart"）：销毁出错分支并原地重建。
+    // 注意：重启请求是在出错组件内部发出的，外层 JS 还会继续往下跑
+    // （比如把 current 写回旧值），所以重建必须用令牌而不是状态比较。
+    const rebuildBranch = () => {
+      forceRebuild = true;
+      branchScope?.dispose();
+      branchScope = null;
+      clearBetween(start, end);
+      branchEffect.schedule();
+    };
+    controlScope.replay = rebuildBranch;
+    branchScope.replay = rebuildBranch;
     return ip;
   },
   [OP.EACH](machine, code, ip, frame) {
@@ -2853,7 +4594,7 @@ const DOM_OPS = {
     let records = new Map();
     let emptyRecord = null;
 
-    runtime.effect(controlScope, () => {
+    const eachEffect = runtime.effect(controlScope, () => {
       const values = normalizeIterable(machine.runFunction(iterFunc, frame, controlScope));
       if (values.length > runtime.options.maxLoop) throw new JLCRuntimeError("each 项目数超限");
       const keys = [];
@@ -2871,6 +4612,11 @@ const DOM_OPS = {
         keys.push(key);
       }
 
+      // 0.6.1：大列表分片渲染。每处理 chunk 项检查一次时间预算；超了就保存
+      // 游标、让出一帧，下一轮重入时已建记录原样复用（幂等），只继续建剩下的。
+      const slicing = runtime.renderSlicing();
+      const deadline = slicing ? Date.now() + Math.max(1, runtime.options.frameBudgetMs || 6) : 0;
+      let chunkLeft = slicing || 0;
       const nextRecords = new Map();
       for (let index = 0; index < values.length; index += 1) {
         const key = keys[index];
@@ -2891,8 +4637,19 @@ const DOM_OPS = {
           insertInto(runtime, parent, recordEnd, end);
           machine.runView(bodyFunc, parent, recordEnd, recordScope, frame, namespace, { preset: bodyPreset });
           record = { scope: recordScope, item, index: indexSignal, start: recordStart, end: recordEnd };
+          // 立刻并入 live map：分片让出后重入时这些记录会被原样复用，
+          // 否则每一片都会把前面的项再建一遍（重复节点）。
+          records.set(key, record);
         }
         nextRecords.set(key, record);
+        if (slicing && --chunkLeft <= 0) {
+          chunkLeft = slicing;
+          if (Date.now() >= deadline) {
+            // 让出一帧：渲染续跑任务会在下一次调度里重新进入本 effect。
+            runtime.scheduleRender("each:continue", () => eachEffect.schedule());
+            return;
+          }
+        }
       }
 
       for (const [key, record] of records) {
@@ -2926,6 +4683,25 @@ const DOM_OPS = {
         emptyRecord = null;
       }
     });
+    // 组件级重启（fault: "restart"）：把列表项全部作废并原地重建。
+    // 单项崩溃时 runtime.restartScope 只销毁那一项的 scope，然后让 owner 重放。
+    const rebuildItems = () => {
+      for (const record of records.values()) {
+        record.scope.dispose();
+        record.item.detach();
+        record.index?.detach();
+        removeInclusive(record.start, record.end);
+      }
+      records = new Map();
+      if (emptyRecord) {
+        emptyRecord.scope.dispose();
+        removeInclusive(emptyRecord.start, emptyRecord.end);
+        emptyRecord = null;
+      }
+      eachEffect.schedule();
+    };
+    controlScope.replay = rebuildItems;
+    for (const record of records.values()) record.scope.replay = () => rebuildItems();
     return ip;
   },
 };
@@ -3180,6 +4956,12 @@ class Runtime {
       maxLoop: options.maxLoop ?? kernel.options.maxLoop,
       autoDispose: options.autoDispose ?? kernel.options.autoDispose,
       maxTotalSteps: options.maxTotalSteps ?? kernel.options.maxTotalSteps ?? 0,
+      // ---- 0.6 协作式调度（0 = 关闭，与 0.4 行为完全一致）----
+      maxSliceSteps: Math.max(0, Math.floor(Number(options.maxSliceSteps ?? kernel.options.maxSliceSteps ?? 0) || 0)),
+      frameBudgetMs: Math.max(0, Number(options.frameBudgetMs ?? kernel.options.frameBudgetMs ?? 0) || 0),
+      sliceHostCalls: options.sliceHostCalls ?? kernel.options.sliceHostCalls ?? true,
+      renderChunk: Math.max(0, Math.floor(Number(options.renderChunk ?? kernel.options.renderChunk ?? 128) || 0)),
+      sliceCheckInterval: Math.max(64, Math.floor(Number(options.sliceCheckInterval ?? kernel.options.sliceCheckInterval ?? 512) || 512)),
     };
     // ---- 策略 / 隔离 / 配额（0.3 的“管理面”） ----
     this.policy = resolvePolicy(options.policy ?? contextOptions.policy ?? kernel.options.policy ?? "strict");
@@ -3191,7 +4973,8 @@ class Runtime {
     this.deniedSet = null;
     this.deniedReasons = null;
     this.neutralized = 0;
-    this.faultMode = options.fault ?? kernel.options.fault ?? "report";
+    // ---- 0.6 故障阶梯：旧档名（report / degrade / stop）自动升级为六级 ----
+    this.faultMode = normalizeFaultLevel(options.fault ?? kernel.options.fault ?? "recover", "recover");
     this.onError = options.onError ?? kernel.options.onError;
     this.onFault = options.onFault ?? kernel.options.onFault;
     this.fetch = options.fetch ?? kernel.options.fetch ?? this.window?.fetch?.bind(this.window) ?? globalThis.fetch?.bind(globalThis);
@@ -3208,6 +4991,28 @@ class Runtime {
     this.destroyed = false;
     this.initializing = true;
     this.scheduler = new Scheduler(this);
+    // ---- 0.6 内核子系统实例 ----
+    const policyGrants = this.policy.capabilities ?? null;
+    const mountGrants = options.grants ?? null;
+    this.permissions = new PermissionKernel({
+      grants: { ...(policyGrants ?? {}), ...(mountGrants ?? {}) },
+      aliases: options.capabilityPaths ?? null,
+      strict: Boolean(options.permissionStrict ?? this.policy.permissionStrict ?? false),
+      audit: typeof this.policy.audit === "function" ? (event) => notePolicy(this, { action: "capability", ...event }) : null,
+      now: options.now ?? null,
+    });
+    this.resources = new ResourceKernel(this, {
+      ...(this.policy.resources ?? null),
+      ...(options.resources ?? null),
+      ...(this.policy.maxDomNodes ? { dom: this.policy.maxDomNodes } : null),
+    });
+    this.checkpoints = new CheckpointStore(this, { limit: options.checkpointLimit ?? kernel.options.checkpointLimit ?? 8 });
+    // ---- 0.6 诊断：默认零开销，只有 debug / profile 打开时才逐指令记账 ----
+    this.profiling = Boolean(options.profile ?? options.debug ?? kernel.options.profile ?? kernel.options.debug ?? false);
+    this.profileFunctions = new Map();
+    this.domMutations = 0;
+    this.counters = { tasks: 0, yields: 0, budgets: 0, renderSlices: 0, restarts: 0, rollbacks: 0, faults: 0 };
+    this.capabilityPaths = Object.freeze({ ...(options.capabilityPaths ?? null) });
     // 【0.4.1 统一 Tick Wheel 调度】收归 every / after 独立闭包，合并微任务派发，杜绝高频掉帧
     this.timerTasks = new Set();
     this.activeTickHandle = null;
@@ -3261,23 +5066,10 @@ class Runtime {
     }
   }
 
+  /** 纯通知通道：onError → 宿主；不参与故障决策（0.4 语义保留）。 */
   reportError(error) {
     const normalized = error instanceof Error ? error : new JLCRuntimeError(String(error));
-    if (normalized.isPolicyError && this.faultMode !== "report") {
-      this.metrics.faults += 1;
-      if (this.faultMode === "stop") {
-        this.unmountSelf?.();
-        return;
-      }
-      if (this.onFault) {
-        try {
-          this.onFault(normalized, { code: normalized.code ?? "E_FAULT", mode: this.faultMode });
-          return;
-        } catch (faultError) {
-          console.error("JLC onFault failed", faultError);
-        }
-      }
-    }
+    if (isYieldSignal(normalized)) throw normalized;
     if (this.onError) {
       try {
         this.onError(normalized);
@@ -3286,6 +5078,255 @@ class Runtime {
       }
     } else {
       console.error("JLC runtime error", normalized);
+    }
+  }
+
+  /** onFault 通道：只报决策，不做动作。 */
+  notifyFault(error, level = this.faultMode) {
+    if (!this.onFault) return false;
+    try {
+      this.onFault(error, {
+        code: error.code ?? "E_FAULT",
+        mode: level,
+        resource: error.resource ?? null,
+        task: null,
+      });
+      return true;
+    } catch (faultError) {
+      console.error("JLC onFault failed", faultError);
+      return false;
+    }
+  }
+
+  /**
+   * 0.6 故障阶梯的唯一出口：ignore → degrade → recover → restart → rollback → stop。
+   * 内核不变量违规（隔离 / 校验 / 不可续跑预算）永远 stop，不受 fault 档影响。
+   */
+  faultLevelFor(error, context = {}) {
+    const requested = normalizeFaultLevel(error?.faultLevel ?? this.faultMode, this.faultMode);
+    if (error instanceof JLCVerifyError || error instanceof JLCIsolationError) return "stop";
+    if (error?.code === "E_BUDGET") return requested === "stop" ? "stop" : (requested === "ignore" ? "ignore" : "recover");
+    if (error?.isPolicyError) return requested;
+    if (requested === "rollback" && this.checkpoints?.list().length) return "rollback";
+    if (requested === "restart" && context.scope) return "restart";
+    return requested;
+  }
+
+  handleFault(error, context = {}) {
+    const normalized = error instanceof Error ? error : new JLCRuntimeError(String(error));
+    if (isYieldSignal(normalized)) throw normalized;
+    const level = this.faultLevelFor(normalized, context);
+    this.counters.faults += 1;
+    if (normalized.isPolicyError || level === "stop") this.metrics.faults += 1;
+    if (level === "ignore") return "ignore";
+    if (level === "stop") {
+      this.notifyFault(normalized, level);
+      this.unmountSelf?.();
+      return "stop";
+    }
+    if (level === "rollback") {
+      const entry = this.rollback();
+      if (entry) {
+        this.counters.rollbacks += 1;
+        this.notifyFault(normalized, level);
+        return "rollback";
+      }
+    }
+    if (level === "restart" && this.restartScope(context.scope)) {
+      this.counters.restarts += 1;
+      this.notifyFault(normalized, level);
+      return "restart";
+    }
+    if (level === "degrade") {
+      this.notifyFault(normalized, level);
+      return "degrade";
+    }
+    if (normalized.isPolicyError && this.notifyFault(normalized, level)) return level;
+    this.reportError(normalized);
+    return level;
+  }
+
+  /** 组件级重启：销毁出错作用域并重放它的视图（错误边界的最小实现）。 */
+  restartScope(scope, options = {}) {
+    const maxRestarts = Math.max(1, Number(options.maxRestarts ?? 3) || 3);
+    let owner = null;
+    for (let current = scope; current; current = current.parent) {
+      if (typeof current.replay === "function" && !current.disposed) {
+        owner = current;
+        break;
+      }
+    }
+    if (!owner) return false; // 没有重放钩子：退回 recover，绝不半销毁
+    owner.restarts = (owner.restarts ?? 0) + 1;
+    if (owner.restarts > maxRestarts) {
+      owner.restarts = 0;
+      return false; // 反复重启仍失败：交给故障阶梯的下一级处理
+    }
+    if (scope && scope !== owner && !scope.disposed) scope.dispose(); // 只销毁出错的组件
+    try {
+      owner.replay();
+      return true;
+    } catch (error) {
+      this.reportError(error);
+      return false;
+    }
+  }
+
+  /** 运行时检查点：state / derive / 权限 / 资源账本一起拍照。 */
+  checkpoint(label, meta = null) {
+    return this.checkpoints?.capture(label, meta) ?? null;
+  }
+
+  rollback(label) {
+    const entry = label == null ? this.latestCheckpoint() : this.checkpoints?.restore(label);
+    if (!entry) return null;
+    this.counters.rollbacks += 1;
+    // 回滚是宿主显式操作：同步跑干调度器，返回时视图已经和 state 一致。
+    this.flush();
+    return entry;
+  }
+
+  /** 同步跑干调度器（0.6：宿主可以直接要求「现在就把该做的做完」）。 */
+  flush() {
+    this.scheduler?.flush();
+    return this;
+  }
+
+  /**
+   * 渲染是否分片。开启条件与协作式调度一致（maxSliceSteps / frameBudgetMs），
+   * 另可用 renderChunk 指定「一片至少处理多少项」，避免分片过碎把重入成本放大。
+   */
+  renderSlicing() {
+    if (!this.options) return 0;
+    if (!(this.options.maxSliceSteps > 0 || this.options.frameBudgetMs > 0)) return 0;
+    return Math.max(1, Math.floor(this.options.renderChunk || 128));
+  }
+
+  /** 让出一次渲染机会：把剩余渲染排成下一帧的任务。 */
+  scheduleRender(label, callback) {
+    if (this.destroyed) return null;
+    this.counters.renderSlices += 1;
+    return this.scheduler.submit({
+      kind: "render",
+      label,
+      priority: PRIORITY.RENDER,
+      yieldToHost: true,
+      run: () => callback(),
+    });
+  }
+
+  latestCheckpoint() {
+    const list = this.checkpoints?.list() ?? [];
+    if (!list.length) return null;
+    const last = list[list.length - 1];
+    return this.checkpoints.restore(last.label);
+  }
+
+  /** 有界事务：一批 signal 变更合并成一次渲染提交。 */
+  transaction(callback) {
+    return this.batch(callback);
+  }
+
+  /** 逐指令热点统计（仅在 profiling 打开时被调用）。 */
+  bumpProfile(name) {
+    const entry = this.profileFunctions.get(name);
+    if (entry) entry.count += 1;
+    else this.profileFunctions.set(name, { name, count: 1 });
+  }
+
+  /** 0.6 只读诊断视图：宿主 IDE / 系统监视器直接渲染。 */
+  profile() {
+    const total = [...this.profileFunctions.values()].reduce((sum, entry) => sum + entry.count, 0);
+    const hot = [...this.profileFunctions.values()]
+      .sort((left, right) => right.count - left.count)
+      .slice(0, 12)
+      .map((entry) => Object.freeze({
+        function: entry.name,
+        instructions: entry.count,
+        share: total > 0 ? entry.count / total : 0,
+      }));
+    return Object.freeze({
+      app: this.module?.app ?? null,
+      active: !this.destroyed,
+      profiling: this.profiling,
+      instructions: total,
+      domMutations: this.domMutations,
+      counters: Object.freeze({ ...(this.counters ?? {}) }),
+      usage: Object.freeze({ ...this.metrics }),
+      resources: this.resources?.usage() ?? Object.freeze({}),
+      hot: Object.freeze(hot),
+      pending: this.scheduler?.pendingTasks?.() ?? Object.freeze([]),
+      suspended: Boolean(this.machine?.suspended),
+      checkpoints: this.checkpoints?.list() ?? Object.freeze([]),
+    });
+  }
+
+  /** VM 只读快照：把 state、权限、资源、任务、检查点打成一个对象。 */
+  snapshot() {
+    const state = Object.create(null);
+    for (const [name, slot] of this.globals?.names ?? []) {
+      const binding = this.globals.bindings[slot];
+      if (binding?.kind === "signal") state[name] = sanitizeValue(binding.signal.value);
+    }
+    return Object.freeze({
+      app: this.module?.app ?? null,
+      scopeId: this.scopeId,
+      state: Object.freeze(state),
+      policy: this.describePolicy(),
+      permissions: this.permissions?.list() ?? Object.freeze([]),
+      resources: this.resources?.usage() ?? Object.freeze({}),
+      checkpoints: this.checkpoints?.list() ?? Object.freeze([]),
+      pendingTasks: this.scheduler?.pendingTasks?.() ?? Object.freeze([]),
+      suspended: Boolean(this.machine?.suspended),
+    });
+  }
+
+  makeDeferred() {
+    let resolve = null;
+    let reject = null;
+    const promise = new Promise((res, rej) => { resolve = res; reject = rej; });
+    return {
+      promise,
+      resolve,
+      reject,
+      settle(error, value) { if (error) reject(error); else resolve(value); },
+    };
+  }
+
+  /**
+   * 0.6 任务执行入口：同步执行，预算耗尽时可挂起并由调度器续跑。
+   * `then` 承接内核 JS 的收尾步骤，因此续跑不会丢状态下文。
+   */
+  perform(task) {
+    const definition = {
+      kind: task.kind ?? "task",
+      label: String(task.label ?? task.kind ?? "task"),
+      priority: normalizePriority(task.priority ?? TASK_PRIORITY[task.kind] ?? PRIORITY.EFFECT),
+      budget: Math.max(0, Number(task.budget ?? this.options.maxSliceSteps ?? 0) || 0),
+      deadline: Math.max(0, Number(task.deadline ?? 0) || 0),
+      sliceable: Boolean(task.sliceable),
+      then: typeof task.then === "function" ? task.then : null,
+      settle: task.deferred?.settle ?? null,
+    };
+    const machine = this.machine;
+    const previousSlice = machine ? machine.beginSlice(definition.sliceable ? definition : null) : null;
+    const previousCurrent = this.scheduler.current;
+    this.scheduler.current = definition;
+    try {
+      const value = task.run(definition);
+      if (definition.then) definition.then(value, null, definition);
+      definition.settle?.(null, value);
+      return value;
+    } catch (error) {
+      if (isYieldSignal(error)) {
+        const continuation = this.scheduler.adoptSuspension(error, definition);
+        return Object.freeze({ suspended: true, continuation, promise: task.deferred?.promise ?? null });
+      }
+      definition.settle?.(error, null);
+      throw error;
+    } finally {
+      if (machine) machine.endSlice(previousSlice);
+      this.scheduler.current = previousCurrent;
     }
   }
 
@@ -3309,6 +5350,15 @@ class Runtime {
         htmlMaxChars: this.policy.htmlMaxChars,
         maxTotalSteps: this.options?.maxTotalSteps ?? 0,
       }),
+      faultLevel: this.faultMode,
+      faultLadder: FAULT_LEVELS,
+      capabilities: this.permissions?.list() ?? Object.freeze([]),
+      resources: this.resources?.usage() ?? Object.freeze({}),
+      scheduler: Object.freeze({
+        lanes: PRIORITY_NAMES,
+        maxSliceSteps: this.options?.maxSliceSteps ?? 0,
+        frameBudgetMs: this.options?.frameBudgetMs ?? 0,
+      }),
     });
   }
 
@@ -3325,6 +5375,16 @@ class Runtime {
         .map((item) => Object.freeze({ kind: item.kind, detail: item.detail, key: item.key }))),
       denied: Object.freeze((this.denied ?? []).map((item) => Object.freeze({ ...item }))),
       usage: Object.freeze({ ...this.metrics }),
+      // 0.6 内核视图：权限表 / 资源账本 / 任务与故障计数（全部只读）
+      permissions: this.permissions?.list() ?? Object.freeze([]),
+      resources: this.resources?.usage() ?? Object.freeze({}),
+      checkpoints: this.checkpoints?.list() ?? Object.freeze([]),
+      kernel: Object.freeze({
+        faultLevel: this.faultMode,
+        counters: Object.freeze({ ...(this.counters ?? {}) }),
+        pendingTasks: this.scheduler?.pendingTasks?.() ?? Object.freeze([]),
+        suspended: Boolean(this.machine?.suspended),
+      }),
     });
   }
 
@@ -3360,6 +5420,7 @@ class Runtime {
       actualOptions = options;
       target.addEventListener(type, registeredListener, actualOptions);
     }
+    this.resources?.reserve("listeners");
     this.metrics.listeners += 1;
     release = scope.own(() => {
       try {
@@ -3449,9 +5510,16 @@ class Runtime {
           if (this.destroyed) break;
           if (task.scope && !task.scope.disposed && this.machine) {
             try {
-              this.machine.runFunction(task.funcIndex, task.chain, task.scope);
+              this.perform({
+                kind: "timer",
+                label: task.mode === 0 ? "after" : "every",
+                priority: PRIORITY.BACKGROUND,
+                sliceable: this.options.maxSliceSteps > 0,
+                run: () => this.machine.runFunction(task.funcIndex, task.chain, task.scope),
+              });
             } catch (error) {
-              this.reportError(error);
+              if (isYieldSignal(error)) throw error;
+              this.handleFault(error, { phase: "timer", scope: task.scope });
             }
           }
         }
@@ -3481,11 +5549,21 @@ class Runtime {
     this.rootScope = null;
     this.globals = null;
     this.module = null;
+    if (this.machine) {
+      this.machine.suspended = null;
+      this.machine.sliceableTask = null;
+    }
     this.machine = null;
+    this.profileFunctions = null;
     this.links = null;
     this.routeSignal = null;
     this.scrollSignal = null;
     this.capabilities = null;
+    this.permissions = null;
+    this.resources = null;
+    this.checkpoints?.clear?.();
+    this.checkpoints = null;
+    this.counters = null;
     this.initialState = null;
     this.onError = null;
     this.options = null;
@@ -3649,6 +5727,7 @@ function installResource(runtime, declaration) {
     const Controller = runtime.window?.AbortController ?? globalThis.AbortController;
     const controller = Controller ? new Controller() : null;
     let active = true;
+    runtime.resources?.reserve("requests");
     runtime.metrics.requests += 1;
     const finish = () => {
       if (!active) return false;
@@ -3808,7 +5887,7 @@ export class JLCProgram {
   }
 }
 
-function resolveModule(value) {
+export function resolveModule(value) {
   if (value instanceof JLCProgram) {
     if (!value.module.verified) verifyModule(value.module, value.sourceName);
     return value.module;
@@ -3952,7 +6031,22 @@ export class VMKernel {
         if (!active) throw new JLCRuntimeError("应用已卸载");
         const value = bindingValue(runtime.globals.resolve(name));
         if (!value?.[CALLABLE]) throw new JLCRuntimeError(`“${name}”不是 action`);
-        const result = runtime.batch(() => value.invoke(argumentsList.map((argument) => sanitizeValue(argument)), runtime.context(rootScope)));
+        const args = argumentsList.map((argument) => sanitizeValue(argument));
+        let result = null;
+        // 0.6：宿主调用也走任务层。开切片时若预算耗尽，返回 Promise（异步完成），
+        // 否则保持 0.4 的同步语义。
+        const sliceable = runtime.options.maxSliceSteps > 0 && runtime.options.sliceHostCalls !== false;
+        const deferred = sliceable ? runtime.makeDeferred() : null;
+        const outcome = runtime.perform({
+          kind: "interaction",
+          label: `call:${name}`,
+          priority: PRIORITY.INTERACTION,
+          sliceable,
+          deferred,
+          run: () => runtime.batch(() => value.invoke(args, runtime.context(rootScope))),
+          then: (value_) => { result = value_; },
+        });
+        if (outcome?.suspended) return deferred.promise.then(() => sanitizeValue(result));
         return sanitizeValue(result);
       },
       flush() {
@@ -4000,6 +6094,47 @@ export class VMKernel {
       policy() {
         return runtime.describePolicy();
       },
+      // ---- 0.6 宿主接管面：授权 / 撤销 / 检查点 / 诊断 ----
+      /** 运行期授予能力（路径或裸能力名），立即生效。 */
+      grant(path, options = {}) {
+        if (!active) throw new JLCRuntimeError("应用已卸载");
+        return runtime.permissions.grant(path, options);
+      },
+      /** 运行期撤销能力：所有未来调用立刻失败，不需要重新挂载。 */
+      revoke(path, reason) {
+        if (!active) throw new JLCRuntimeError("应用已卸载");
+        return runtime.permissions.revoke(path, reason);
+      },
+      /** 能力图视图：路径 / 状态 / 租约 / 调用与拒绝计数。 */
+      capabilities() {
+        return Object.freeze(runtime.permissions?.list() ?? []);
+      },
+      /** 资源账本视图。 */
+      resources() {
+        return runtime.resources?.usage() ?? Object.freeze({});
+      },
+      /** 打检查点（state / 权限 / 资源一起拍照）。 */
+      checkpoint(label, meta) {
+        if (!active) throw new JLCRuntimeError("应用已卸载");
+        return runtime.checkpoint(label ?? `cp:${runtime.metrics.cycles}`, meta);
+      },
+      /** 回滚到检查点（省略 label = 最近一个）。 */
+      rollback(label) {
+        if (!active) throw new JLCRuntimeError("应用已卸载");
+        return runtime.rollback(label);
+      },
+      /** 只读诊断视图：热点函数 / 资源 / 任务 / 挂起状态。 */
+      profile() {
+        return runtime.destroyed ? Object.freeze({ active: false }) : runtime.profile();
+      },
+      /** 只读快照：state + 策略 + 权限 + 资源 + 检查点。 */
+      snapshot() {
+        return runtime.destroyed ? Object.freeze({ active: false }) : runtime.snapshot();
+      },
+      /** 尚未派发的调度任务（大型项目排查「谁在抢主线程」）。 */
+      tasks() {
+        return runtime.scheduler?.pendingTasks?.() ?? Object.freeze([]);
+      },
     };
 
     try {
@@ -4011,9 +6146,19 @@ export class VMKernel {
       target.appendChild(end);
       installEnvironment(runtime, module);
       installStyles(runtime, module);
-      runtime.machine.runView(module.view, target, end, rootScope, null, null);
-      setupAutoDispose(runtime, start, end, handle.unmount);
-      runtime.initializing = false;
+      // 0.6：首屏渲染也是一个可切片任务——大到需要分帧时，VM 保存现场、
+      // 让出、下一轮续跑，而不是把主线程钉死。预算为 0（默认）时行为与 0.4 完全一致。
+      runtime.perform({
+        kind: "view",
+        label: `mount:${appName}`,
+        priority: PRIORITY.RENDER,
+        sliceable: runtime.options.maxSliceSteps > 0 || runtime.options.frameBudgetMs > 0,
+        run: () => runtime.machine.runView(module.view, target, end, rootScope, null, null),
+        then: () => {
+          setupAutoDispose(runtime, start, end, handle.unmount);
+          runtime.initializing = false;
+        },
+      });
       return Object.freeze(handle);
     } catch (error) {
       runtime.initializing = false;
