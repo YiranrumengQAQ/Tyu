@@ -13,13 +13,75 @@ JLC 源码 → Tokenizer → Parser → 优化器 → Code Generator ──→ .
             jlc-vm.js：Verifier → Linker → 栈式 VM 调度循环 → DOM / Effects
 ```
 
-> 当前版本：`0.4.0`，零运行时依赖，ES Module，可直接在现代浏览器运行。
+> 当前版本：`0.6.0`（ABI `jlc-abi/3`，字节码 v3），零运行时依赖，ES Module，可直接在现代浏览器运行。
 >
 > 0.3 把「安全」从散落的黑名单变成一个可管理的**策略层**：三档 profile、静态接口清单
-> （`.jbc` v2 的 MANIFEST 段）、`stop / degrade / report` 三档 fault、实例隔离域与配额。
+> （`.jbc` v2 的 MANIFEST 段）、fault 档、实例隔离域与配额。
 > 0.4 进一步**全权接管宿主**：宽容自愈解析（`=` 当 `:`、自动补分号）、`title()` /
 > `favicon()`、只读 `$scroll` 信号、`isolation: "strict"` 的物理 Realm 断言；
 > [JLC OS](./web/index.html) 是一个不到 40 行的 Bootloader，业务全部是纯文本 `.jlc`。
+> **0.6 升级的是 VM 本身**：多趟验证器（CFG + 抽象栈类型）、能力图与权限内核、
+> 资源内核、六级故障阶梯、检查点回滚，以及「预算耗尽就保存现场、让出、下一轮续跑」的
+> 协作式调度。改造细节见 [docs/0.6-blueprint.md](./docs/0.6-blueprint.md)。
+
+## 0.6 内核：一句话一次
+
+```js
+import JLC, { PRIORITY, FAULT_LEVELS, CAPABILITY_PATHS } from "./jlc.js";
+
+const app = JLC.mount(source, "#app", {
+  policy: "open",
+  fault: "restart",              // ignore | degrade | recover | restart | rollback | stop
+  resources: { effects: 8, requests: 4 },
+  capabilityPaths: { storagePut: "storage.indexeddb" },
+  grants: { "storage.indexeddb": { mode: "session" } },
+  maxSliceSteps: 50_000,         // 开协作式调度：预算耗尽 → 保存现场 → 让出 → 续跑
+  profile: true,                 // 逐指令热点统计（默认零开销）
+});
+
+app.capabilities();              // 能力路径 / 状态 / 租约 / 调用与拒绝计数
+app.revoke("storage.indexeddb"); // 运行中撤销：后续调用立刻失败
+app.checkpoint("before-edit");   // state + 权限 + 资源一起拍照
+app.rollback("before-edit");     // 回到那一刻（同步 flush，返回时视图已一致）
+app.profile();                   // 热点函数 / 资源账本 / 任务 / 挂起状态
+await app.call("crunch");        // 切片开启时宿主调用异步完成
+
+JLC.verify(program);             // 11 趟验证报告（永不抛异常）
+JLC.graph(program);              // 控制流图 dump
+JLC.analyze(program);            // CFG 统计 / 能力路径 / 确定性判定
+JLC.profileAll();                // 全内核诊断汇总（系统监视器直接渲染）
+```
+
+策略层新增两个字段，和旧字段并存：
+
+```js
+resolvePolicy({
+  profile: "open",
+  capabilities: { network: { http: true }, filesystem: { read: true, write: false } },
+  resources: { effects: 8, streams: 2 },
+  permissionStrict: true,        // 未授予即拒绝（默认是「未登记即放行」，兼容 0.4）
+});
+```
+
+`.jbc` v3 多了三个段（能力清单 / 资源清单 / 标志位），解码器跳过未知段，
+旧的 v1/v2 产物继续装载 —— 详见 [JBC.md](./JBC.md) 与 [SPEC.md §13](./SPEC.md)。
+
+### 点着看：0.6 内核控制台
+
+[`web/0.6/index.html`](./web/0.6/index.html) 不是说明书，而是一块**仪表盘**：
+里面那台应用是真的 `.jlc → .jbc → VM → DOM`，右侧四块面板直接读内核的只读视图
+（`capabilities()` / `resources()` / `profile()` / `tasks()`），按钮则直接调运行期接管 API：
+
+| 按钮 | 你在看什么 |
+| --- | --- |
+| 撤销 / 重新授予 `storage.indexeddb` | 权限内核：撤销之后宿主函数一次都碰不到，`denials` 开始计数 |
+| 打检查点 / 回滚 | 检查点：state + 权限表 + 资源账本一起拍照、一起恢复 |
+| 追加 2000 行 | 分片渲染：`each` 每片让出一帧，`renderSlices` 计数，列表不重复建节点 |
+| 让组件崩一次 | Error Boundary：只重启出事的那块，重放后自愈（`restarts` / `faults`） |
+| 跑 11 趟验证 / 打印 CFG | 多趟验证器与控制流图：能力路径、确定性判定、块与回边 |
+
+本地预览：`node scripts/serve-web.mjs` 然后打开 `http://localhost:8080/web/0.6/`。
+GitHub Pages 上就是仓库里的同一页，没有任何后端参与。
 
 ## 策略层：一次声明，三处生效
 

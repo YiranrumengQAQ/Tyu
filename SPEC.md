@@ -1,4 +1,4 @@
-# JLC 0.3 Language and Kernel Specification
+# JLC 0.6 Language and Kernel Specification
 
 本文件描述 `jlc.js` 当前实现的可执行语义。关键字区分大小写，源文件使用 Unicode；标识符可以使用中文等 Unicode 字母。
 
@@ -343,11 +343,22 @@ URL 分两条路径，这是 0.2 行为的延续：**HTML sink**（`src`、`href
 
 `fault` 决定策略拒绝发生时的行为，可设在 kernel 或 mount 上：
 
-| fault | 装载期（静态清单被拒） | 运行期（写入时命中） |
-| --- | --- | --- |
-| `stop` | 渲染任何节点之前抛 `JLCPolicyError`，列出全部 `kind:detail（原因）` | 同上，异常解包后向上传播 |
-| `degrade` | 被拒接口替换成 `<jlc-denied role="note">接口 X 被策略 P 拒绝</jlc-denied>`；被拒的副作用（title / emit / http / timer / navigate / capability / srcdoc / 超配额写入）跳过并记账 | 副作用跳过 + `faults` 计数 |
-| `report` | 照常渲染，只通过 `onFault` 汇报 | 照常执行，只记录 |
+0.6 把 `fault` 从三档扩成**六级阶梯**（`FAULT_LEVELS`），旧档名自动映射：
+
+| fault | 级别 | 装载期（静态清单被拒） | 运行期（错误 / 越权） |
+| --- | --- | --- | --- |
+| `ignore` | 0 | 照常渲染，不记账 | 照常执行，不记不拦（仅调试用） |
+| `degrade` | 1 | 被拒接口替换成 `<jlc-denied role="note">接口 X 被策略 P 拒绝</jlc-denied>`；被拒的副作用跳过并记账 | 跳过这一步，实例继续 |
+| `recover` | 2 | 照常渲染，只通过 `onFault` / `onError` 汇报 | 放行 + 记账 + 上报（0.3/0.4 的 `report` 就落在这一级） |
+| `restart` | 3 | 同 `degrade` | **Error Boundary**：只销毁出错组件（`when` 分支 / `each` 列表项），由 `scope.replay` 原地重建；同一作用域连续重启超过 3 次退到下一级 |
+| `rollback` | 4 | 同 `degrade` | 回到最近的运行时检查点（state + 权限表 + 资源账本） |
+| `stop` | 5 | 渲染任何节点之前抛 `JLCPolicyError`，列出全部 `kind:detail（原因）` | 卸载实例：内核不变量已不可信 |
+
+旧档名映射：`report / warn / audit → recover`，`skip → degrade`，`throw / fail / abort / unmount → stop`。
+`JLCVerifyError` 与 `JLCIsolationError` **永远 stop**，与 `fault` 档无关；
+`JLCBudgetError`（`E_BUDGET`，不可续跑的 CPU 预算越界）按 `fault` 档裁决。
+
+**权限内核的裁决不受 fault 档影响**：能力被撤销 / 暂停 / 租约到期时，第一次调用就失败并记账。
 
 `onFault(info)` 收到 `{ action: "deny" | "skip" | "ignore" | "neutralize" | "quota", kind, detail, message }`。
 配额类失败（`maxDomNodes`、`maxStyleBytes`、`htmlMaxChars`、`maxTotalSteps`）抛
@@ -378,14 +389,36 @@ peakStack peakFrames                                         压力峰值
 Capability 仍是明确的信任边界：内核净化其输入输出、按 `capabilityAllowlist` 与
 `capability:<name>` 记账，但 capability 在宿主世界内部产生的全局副作用不受 JLC 生命周期控制。
 
-## 11. 调度
+## 11. 调度（0.6：通道 + 任务 + 协作式让出）
 
-Signal 写入把订阅 effect 加入去重队列并安排 microtask。优先级：
+Signal 写入把订阅 effect 加入去重队列并安排 microtask。effect 之间按优先级数字排序
+（0 最高），derive 先于 resource / style / DOM；flush 持续到队列为空，超过 1000 轮判定为响应循环。
+事件、`handle.set` 和 `handle.call` 自动 batch；测试或必须立即读取 DOM 时可调用 `handle.flush()`。
 
-1. derive effect；
-2. resource、style、DOM 和结构 effect。
+0.6 在上面叠加**任务层**与 8 条通道（`PRIORITY`，数字越小越先跑）：
 
-flush 持续执行到队列为空；超过 1000 轮判定为响应循环。事件、`handle.set` 和 `handle.call` 自动 batch；测试或必须立即读取 DOM 时可调用 `handle.flush()`。
+```text
+P0 SYSTEM   P1 INPUT   P2 INTERACTION   P3 RENDER   P4 EFFECT   P5 NETWORK   P6 BACKGROUND   P7 IDLE
+```
+
+`Scheduler.submit(task)` / `runtime.perform(task)` 接受 `{ kind, priority, budget, deadline, sliceable, run, then }`。
+通道是「用户输入永远抢在后台计算前面」的落点；`kind` 决定默认通道（`TASK_PRIORITY`），
+数字优先级与 0.4 同序，旧代码不需要改。
+
+**协作式让出（Cooperative Yield）**：设置 `maxSliceSteps` / `frameBudgetMs` 后，
+VM 每 512 条指令检查一次预算与截止时间；耗尽时保存现场（`frames / stack / context / render / ip`），
+抛出 `JLCYieldSignal`（控制流，不是错误），由调度器排成续跑任务，在下一轮微任务里
+`Machine.resumeSuspended()` 继续执行。**只有最外层 dispatch 且任务显式声明可切片时**才允许让出；
+嵌套路径（effect 内部的视图渲染、`each` 的 JS 循环）超预算时抛 `JLCBudgetError` 交给故障阶梯，
+绝不静默丢状态。未配置预算时该路径零开销，行为与 0.4 完全一致。
+
+宿主调用在切片开启时可能异步完成：`handle.call(name)` 返回 Promise；调用方可以显式
+`sliceHostCalls: false` 关掉切片，保持同步语义。
+
+**渲染分片**：`each` 在切片开启时每 `renderChunk`（默认 128）项检查一次时间预算，
+超预算就把「继续渲染」排成下一帧的任务（有 `requestAnimationFrame` 时用它），
+重入时已建列表项原样复用（幂等），因此大列表不会一次性钉死主线程，
+也不会重复建节点。计数见 `profile().counters.renderSlices`。
 
 ## 12. 字节码执行语义补充
 
@@ -406,3 +439,59 @@ flush 持续执行到队列为空；超过 1000 轮判定为响应循环。事�
   属性、bind、when、each）以函数索引注册为 effect，依赖变化时由 VM 重放
   对应函数，而不是重建结构。
 - **常量属性**：字面量属性在编译期折叠为 `ATTR_STATIC`，不产生 effect。
+
+## 13. 0.6 内核子系统
+
+### 13.1 能力图（Capability Graph）
+
+宿主能力建模成一棵树，`CAPABILITY_PATHS` 是**内核唯一权威**（宿主不能凭空发明路径）：
+
+```text
+dom · network · storage · filesystem · browser · device · compute · process
+```
+
+`resolvePolicy({ capabilities })` 接受树形或扁平写法，打错路径直接拒绝（`JLCRuntimeError`）。
+祖先授权：`filesystem.read` 授予即覆盖 `filesystem.read.picker`。
+宿主可用 `capabilityPaths` 把裸函数名映射到路径；`CAPABILITY_ALIASES` 已经内置了
+0.5 Capability Hub 的全部名字（`storagePut` / `clipboardWrite` / `fileOpen` / `notify` …），
+所以旧宿主零改动即可接入能力图。
+
+### 13.2 权限内核（Permission Kernel）
+
+```text
+requested → granted / session / once / persistent → (expired | revoked | suspended | denied)
+```
+
+`PermissionKernel` 记录状态、租约（`expires`）、调用与拒绝计数；`once` 用完即失效，
+`expires` 惰性判定（不需要定时器）。`handle.grant() / revoke() / capabilities()` 是运行期 API：
+**撤销立刻生效**，不需要 unmount → mount。
+
+### 13.3 资源内核（Resource Kernel）
+
+`ResourceKernel` 统一记账 14 类资源（`RESOURCE_KINDS`），派生用量直接读 `runtime.metrics`，
+显式用量走 `reserve / release`。唯一越界出口是 `JLCQuotaError`（`ENOSPC_QUOTA`），
+错误对象带 `resource / limit / used`。限额来源：策略 `resources` 字段、`mount({ resources })`、
+以及策略既有字段（`maxDomNodes` → `dom`）。
+
+### 13.4 检查点与回滚（Checkpoint / Rollback）
+
+`handle.checkpoint(label)` 拍下可变状态（state / derive / resource 快照 signal 值）、
+权限表、资源账本与故障计数；`handle.rollback(label)` 恢复它们并同步 flush 调度器。
+`CheckpointStore` 默认只保留最近 8 个（`checkpointLimit` 可调）。
+DOM 不拍照：结构靠 scope 重建 + 视图重跑回到一致状态。
+
+### 13.5 验证器：11 趟
+
+```text
+header · pool · opcode · operand · stack · cfg · types · structure · manifest · security · determinism
+```
+
+`JLC.verify(program)` 返回结构化报告（永不抛异常）；`JLC.graph(program)` 输出控制流图；
+`JLC.analyze(program)` 返回 CFG 统计、能力路径、确定性判定与警告。
+Pass 6/7 默认只报告（advisory），`verifyModule(module, name, { mode: "strict" })` 时升级为载入失败。
+
+### 13.6 诊断面
+
+`handle.profile()`（热点函数、DOM 变更、任务、挂起状态）、`handle.snapshot()`、
+`handle.tasks()`、`JLC.profileAll()`、`JLC.resources()`。
+只有 `profile: true` / `debug: true` 时才逐指令计数，默认路径零开销。

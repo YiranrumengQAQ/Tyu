@@ -1,7 +1,7 @@
 {
   "name": "@tyu/jlc-kernel",
-  "version": "0.4.0",
-  "description": "JLC: a dependency-free bytecode virtual machine and compiler for browser interfaces",
+  "version": "0.6.0",
+  "description": "JLC 0.6: a dependency-free bytecode VM + compiler with a capability graph, resource kernel, fault ladder and cooperative scheduler",
   "type": "module",
   "main": "./jlc.js",
   "module": "./jlc.js",

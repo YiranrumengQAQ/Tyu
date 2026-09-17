@@ -3,7 +3,7 @@
  * 顺带暴露根部的内核源码（Bootloader 用 `../jlc.js` 引入），并附带 COOP/COEP。
  * Copyright (c) 2026 JLC contributors. MIT licensed.
  *
- *   node scripts/serve-web.mjs [--port 8080] [--no-isolation] [--root <dir>]
+ *   node scripts/serve-web.mjs [--port 8080] [--no-isolation] [--root <dir>] [--home <path>]
  *
  * 0.4 起页面只有一个：web/index.html（Bootloader）。它把 .jlc 当纯文本 fetch 进来，
  * 全权交给内核编译并接管视口。GitHub Pages 直接托管仓库即可，不需要本服务器；
@@ -27,6 +27,8 @@ function arg(name, fallback) {
 const PORT = Number(arg("port", process.env.PORT ?? 8080));
 const HOST = String(arg("host", "0.0.0.0"));
 const ROOT = resolve(String(arg("root", ROOT_DEFAULT)));
+// 根路径落地页：默认 /web/（JLC OS），本地想直接看 0.6 内核控制台就 --home /web/0.6/
+const HOME = String(arg("home", "/web/"));
 const ISOLATION = !process.argv.includes("--no-isolation");
 
 const TYPES = new Map([
@@ -95,9 +97,9 @@ const server = createServer(async (request, response) => {
     return;
   }
   // Bootloader 在 /web/ 下，用相对路径取 ./apps/*.jlc 与 ../jlc.js：
-  // 根路径直接领去 /web/，保证哈希路由与相对引用都对得上。
+  // 根路径直接领去 /web/（可用 --home 改），保证哈希路由与相对引用都对得上。
   if (url.pathname === "/" || url.pathname === "/index.html") {
-    response.writeHead(302, { Location: "/web/", ...securityHeaders(url.pathname) });
+    response.writeHead(302, { Location: HOME, ...securityHeaders(url.pathname) });
     response.end();
     return;
   }
@@ -122,7 +124,7 @@ const server = createServer(async (request, response) => {
 
 server.listen(PORT, HOST, () => {
   const shown = HOST === "0.0.0.0" ? "localhost" : HOST;
-  console.log(`JLC OS → http://${shown}:${PORT}/web/#/todo.jlc`);
+  console.log(`JLC OS → http://${shown}:${PORT}${HOME === "/web/" ? "/web/#/todo.jlc" : HOME}`);
   console.log(`  根目录 ${ROOT}`);
   console.log(`  COOP/COEP ${ISOLATION ? "开（crossOriginIsolated 可用）" : "关（--no-isolation）"}`);
 });
