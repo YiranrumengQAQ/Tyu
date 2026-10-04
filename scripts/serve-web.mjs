@@ -65,7 +65,9 @@ function securityHeaders(pathname) {
       "script-src 'self' 'unsafe-inline'",
       // 0.5 外壳用外链 shell.css + manifest.webmanifest（0.4 仍只靠内联样式，互不影响）
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob:",
+      // 图片：本机 / data: / blob: / 任意 https 图床（landscape 画廊引 picsum.photos，
+      // 之前被 img-src 挡掉，本地预览会是一片破图，Pages 上却是好的）。
+      "img-src 'self' data: blob: https:",
       "connect-src 'self' data:",
       "manifest-src 'self'",
       "object-src 'none'",

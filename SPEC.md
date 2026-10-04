@@ -53,6 +53,9 @@ view        = "view", view-block ;
 
 - `state`：可写 signal；`mount({ state })` 可覆盖初值。
 - `derive`：只读 signal；effect 自动记录本轮真正读取的依赖。
+  注意 derive 是「flush 时由 effect 重算」的：同一个 action 里刚改完依赖就读它，
+  拿到的还是上一轮的值（`a = 3; out = b;` 里 `b` 仍是旧值）。需要在动作内立刻要新值，
+  就把换算直接写成表达式（或在动作里显式算一遍），别依赖 derive 的即时性。
 - `action`：同步、受步数限制的 JLC 函数。
 - `resource`：表达式必须返回 `http()` 描述符。
 - `style`：在 document head 创建带 `data-jlc-style` 的 style，卸载时删除；表达式可以响应 state。
@@ -90,10 +93,12 @@ each       = "each", "(", identifier, [ ",", identifier ],
 | `bind:checked = state` | checkbox 双向绑定 |
 | `on:click = { … }` | 生命周期事件动作 |
 
-属性名前缀（`attr:` / `data:` / `aria:` / `prop:` / `style:` / `class:`）的后缀只接受标识符
-字符，翻译时冒号变成连字符：`data:picked` 写进 `data-picked`。带连字符的名字
-（`data-picked = …`）不是合法语法；`class:` 与 `style:` 的后缀同理，用 `-` 命名的类请改走
-`class = "…" ` 或 `class:name` 的下划线/驼峰别名。
+属性名前缀（`attr:` / `data:` / `aria:` / `prop:` / `style:` / `class:`）的后缀翻译时冒号变成
+连字符：`data:picked` 写进 `data-picked`。`-` 也可以直接写在名字里，两种写法完全等价——
+`attr:data-theme` ≡ `attr:data:theme`、`aria-label` ≡ `aria:label`、`attr:stroke-width`
+≡ `attr:stroke:width`（HTML/SVG 的日常写法直接可用）。名字里的 `-` 必须紧贴两侧的标识符，
+`a - b` 这种带空格的减法仍是表达式。`class:` 与 `style:` 的后缀同理接受 `-`
+（`class:is-active`、`style:border-radius`）。
 
 事件修饰符：`prevent`、`stop`、`self`、`once`、`capture`、`passive`、`window`（位掩码 1/2/4/8/16/32/64）。
 `on:resize.window` 与语法糖 `on:window:resize` 等价：监听器挂在 `window` 上，

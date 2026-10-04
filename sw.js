@@ -9,8 +9,10 @@
    - 外部请求（跨域、POST、jlc:// 等）一律不碰，原样放行。
    ============================================================ */
 
-const PRE_CACHE = "jlc-os-0.5-pre-v1";
-const RUN_CACHE = "jlc-os-0.5-run-v1";
+// 版本号 = 缓存代次：precache 是「缓存优先」，改了内核/应用/样式就必须抬高它，
+// 否则老访客会一直吃到旧文件（activate 里会顺手删掉旧代次的缓存）。
+const PRE_CACHE = "jlc-os-0.5-pre-v2";
+const RUN_CACHE = "jlc-os-0.5-run-v2";
 
 /* 相对本脚本（仓库根）解析 —— GitHub Pages 站点前缀（如 /Tyu/）下同样成立。 */
 const PRECACHE = [
@@ -39,6 +41,7 @@ const PRECACHE = [
   "web/apps/tracer.jlc",
   "web/apps/landscape.jlc",
   "web/0.5/index.html",
+  "web/tokens.css",
   "web/0.5/shell.css",
   "web/0.5/apps.json",
   "web/0.5/manifest.webmanifest",

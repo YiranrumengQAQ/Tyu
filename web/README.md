@@ -22,13 +22,19 @@
 ```text
 web/
 ├─ index.html          Bootloader：唯一的物理挂载点 #kernel-viewport + 哈希路由
+├─ tokens.css          共享设计系统：--ink/--border/--surface… 与 .muted/.badge 工具类
+│                      （0.4 这个页面与 0.5 外壳共用同一份，两边渲染色一致）
 └─ apps/               业务全部是纯文本 .jlc，直接拉取零执行风险
    ├─ todo.jlc            strict 档：纯 state/derive/each，无宿主接口
    ├─ palette.jlc         open 档：style 前缀作用域 + 字面量 data: URL
    ├─ html-preview.jlc    open 档：iframe/srcdoc 富文本预览，防抖，纯内核展开文档
    ├─ json-browser.jlc    open 档：resource + data: 端点（离线可跑）
+   ├─ landscape.jlc       open 档：大应用样本（画廊 + 表单/滑块/历史/each 事件）
    └─ tracer.jlc          open 档：every 定时器 / emit / on:x.window，计数全在内核状态里
 ```
+
+> 属性名里可以直接写 `-`：`attr:data-theme` ≡ `attr:data:theme`、`aria-label` ≡ `aria:label`、
+> `attr:stroke-width` ≡ `attr:stroke:width`（0.4 起，见 [SPEC.md](../SPEC.md) 4.1）。
 
 ## 用法
 

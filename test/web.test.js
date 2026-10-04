@@ -1,11 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { JLC } from "../jlc.js";
-import { createDOM } from "../support/fake-dom.js";
+import { FakeEvent, createDOM } from "../support/fake-dom.js";
 
 /*
  * JLC OS（0.4 全权内核形态）测试：
@@ -89,6 +89,30 @@ test("所有 .jlc 应用按声明策略档编译通过且无收回接口", () =>
     assert.ok(program.module.functions.length > 0, `${name} 编译出了函数体`);
     assert.ok(JLC.disassemble(program).length > 0, `${name} 可反汇编`);
   }
+});
+
+test("默认应用 todo.jlc 的列表交互真的改状态（回归：事件体读不到 each 变量）", () => {
+  // 症状：勾选/删除全都毫无反应——事件体里 `item.id` 解析到了事件帧的 $event 快照。
+  const { document, target } = createDOM();
+  const handle = JLC.mount(read("web/apps/todo.jlc"), target, { document, policy: "open", isolation: "strict", autoDispose: true });
+  const rows = () => [...target.querySelectorAll("li")];
+  assert.match(target.textContent, /待办 1 \/ 2 项/u, "初始摘要可见");
+
+  const boxes = [...target.querySelectorAll("input")].filter((node) => node.getAttribute("type") === "checkbox");
+  assert.equal(boxes.length, 2);
+  boxes[1].checked = true;
+  boxes[1].dispatchEvent(new FakeEvent("change", { bubbles: true }));
+  handle.flush?.();
+  assert.equal(rows()[1].classList.contains("done"), true, "第 2 行应被勾选");
+  assert.match(target.textContent, /待办 0 \/ 2 项/u, "摘要随状态更新");
+
+  const removeButtons = [...target.querySelectorAll("button")].filter((node) => node.textContent.trim() === "×");
+  assert.equal(removeButtons.length, 2);
+  removeButtons[0].dispatchEvent(new FakeEvent("click", { bubbles: true }));
+  handle.flush?.();
+  assert.equal(rows().length, 1, "第 1 行应被删除");
+  assert.match(target.textContent, /写完 0.3 的策略层/u, "留下的是第 2 行");
+  handle.unmount();
 });
 
 test("默认应用 todo.jlc 能被内核全权挂载并渲染", () => {
@@ -226,4 +250,51 @@ test("strict 隔离域拒绝把节点插到应用子树之外", () => {
     (error) => error.name === "JLCIsolationError" && /应用子树之外/.test(error.message),
   );
   assert.equal(outside.textContent, "", "越权写入没有留下任何节点");
+});
+
+/* ------------------------------------------------------------------
+ * 4. 共享设计系统与离线清单：两边都得对得上
+ * ------------------------------------------------------------------ */
+
+test("web/tokens.css 覆盖所有 .jlc 应用引用的 CSS 变量", () => {
+  // 回归：0.4 应用直接引用 --ink/--border/--surface…，这些变量原先只定义在
+  // web/0.5/shell.css 里，于是 0.4 Bootloader（web/index.html）下的应用全是裸样式。
+  const tokens = read("web/tokens.css");
+  const shared = new Set([...tokens.matchAll(/(--[a-z0-9-]+)\s*:/giu)].map((match) => match[1]));
+  const shell = new Set([...read("web/0.5/shell.css").matchAll(/(--[a-z0-9-]+)\s*:/giu)].map((match) => match[1]));
+  assert.ok(shared.has("--ink") && shared.has("--border") && shared.has("--surface"), "基础变量在 tokens.css 里");
+
+  const sources = [
+    ...readdirSync(join(ROOT, "web/apps")).filter((file) => file.endsWith(".jlc")).map((file) => `web/apps/${file}`),
+    ...readdirSync(join(ROOT, "web/0.5/apps")).filter((file) => file.endsWith(".jlc")).map((file) => `web/0.5/apps/${file}`),
+  ];
+  const missing = [];
+  for (const path of sources) {
+    const source = read(path);
+    const local = new Set([...source.matchAll(/(--[a-z0-9-]+)\s*:/giu)].map((match) => match[1]));
+    for (const match of source.matchAll(/var\((--[a-z0-9-]+)/giu)) {
+      const name = match[1];
+      if (shared.has(name) || local.has(name) || shell.has(name)) continue;
+      missing.push(`${path}: ${name}`);
+    }
+  }
+  assert.deepEqual(missing, [], `这些变量没有任何一处定义：${missing.join("、")}`);
+});
+
+test("0.4 Bootloader 引了共享设计系统，两个页面用同一份", () => {
+  const boot = read("web/index.html");
+  assert.match(boot, /<link rel="stylesheet" href="\.\/tokens\.css"/u, "0.4 页面引入 tokens.css");
+  assert.match(read("web/0.5/index.html"), /<link rel="stylesheet" href="\.\.\/tokens\.css"/u, "0.5 页面也引入同一份");
+  assert.doesNotMatch(read("web/0.5/shell.css"), /:root\s*\{/u, "变量只留一份，不在 shell.css 里重复定义");
+});
+
+test("Service Worker 的 precache 清单全部真实存在（addAll 是原子的，少一个就整站离线失败）", () => {
+  const source = read("sw.js");
+  const block = /const PRECACHE = \[([\s\S]*?)\]\.map/u.exec(source);
+  assert.ok(block, "sw.js 里有 PRECACHE 清单");
+  const paths = [...block[1].matchAll(/"([^"]+)"/gu)].map((match) => match[1]);
+  assert.ok(paths.length > 20, "清单不是空的");
+  const missing = paths.filter((path) => !existsSync(join(ROOT, path)));
+  assert.deepEqual(missing, [], `清单里有仓库中不存在的文件：${missing.join("、")}`);
+  assert.ok(paths.includes("web/tokens.css"), "共享设计系统要进离线缓存");
 });

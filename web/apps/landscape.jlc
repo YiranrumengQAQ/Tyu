@@ -120,6 +120,7 @@ app LandscapePro {
 
   action toggleLube() {
     useLube = !useLube;
+    refreshResult();
   }
 
   action toggleMotivation() {
@@ -128,20 +129,24 @@ app LandscapePro {
 
   action setLength(val) {
     toyLength = clamp(number(val), 1, 150);
+    refreshResult();
   }
 
   action setDiameter(val) {
     toyDiameter = clamp(number(val), 0.5, 10);
+    refreshResult();
   }
 
   action setCount(val) {
     let c = clamp(round(number(val)), 2, 100);
     if (c % 2 != 0) { c = c + 1; }
     totalCount = c;
+    refreshResult();
   }
 
   action setExperience(val) {
     experience = val;
+    refreshResult();
   }
 
   action addLog(msg, type = "info") {
@@ -160,14 +165,39 @@ app LandscapePro {
   }
 
   action calculate() {
-    let mult = expMultiplier;
-    let base = ((number(toyLength) / 30) + (number(toyDiameter) / 3) + 1.2) * mult;
-    originalDelay = base;
-    actionDelay = max(0.2, useLube ? base * 0.70 : base);
+    computeSettings();
+    hasCalculated = true;
 
     if (useLube) {
       addLog("[润滑] 速度已提升约 30%", "success");
     }
+
+    let histItem = {
+      id: now(),
+      len: toyLength,
+      dia: toyDiameter,
+      count: totalCount,
+      exp: expLabel,
+      expKey: experience,
+      lube: useLube
+    };
+    let nextHist = prepend(settingsHistory, histItem);
+    if (len(nextHist) > 8) {
+      nextHist = slice(nextHist, 0, 8);
+    }
+    settingsHistory = nextHist;
+
+    addLog("[成功] 计算完毕 -- 频率: " + string(round(actionDelay * 100) / 100) + "秒/次", "success");
+  }
+
+  /* 纯计算：算频率、评分、剩余时间，不写日志也不记历史。 */
+  action computeSettings() {
+    /* 注意：derive 是 effect 驱动的 signal，同一个 action 里刚改完 experience 就读
+       expMultiplier 拿到的还是上一轮的值（要等 flush）。这里直接按 experience 算倍数。 */
+    let mult = experience == "beginner" ? 1.5 : (experience == "advanced" ? 0.7 : (experience == "expert" ? 0.5 : 1.0));
+    let base = ((number(toyLength) / 30) + (number(toyDiameter) / 3) + 1.2) * mult;
+    originalDelay = base;
+    actionDelay = max(0.2, useLube ? base * 0.70 : base);
 
     let safety = 100;
     if (number(toyLength) > 100) { safety = safety - 20; }
@@ -181,24 +211,13 @@ app LandscapePro {
     if (useLube) { safety = safety + 20; } else { safety = safety - 25; }
 
     safetyScore = clamp(safety, 0, 100);
-    hasCalculated = true;
     remainingSeconds = round(number(totalCount) * actionDelay);
+  }
 
-    let histItem = {
-      id: now(),
-      len: toyLength,
-      dia: toyDiameter,
-      count: totalCount,
-      exp: expLabel,
-      lube: useLube
-    };
-    let nextHist = prepend(settingsHistory, histItem);
-    if (len(nextHist) > 8) {
-      nextHist = slice(nextHist, 0, 8);
-    }
-    settingsHistory = nextHist;
-
-    addLog("[成功] 计算完毕 -- 频率: " + string(round(actionDelay * 100) / 100) + "秒/次", "success");
+  /* 参数一改就地重算：结果区不留旧值，开始进程用的也是当前设置。 */
+  action refreshResult() {
+    if (!hasCalculated || isRunning) { return; }
+    computeSettings();
   }
 
   action restoreHist(item) {
@@ -206,6 +225,9 @@ app LandscapePro {
     toyDiameter = item.dia;
     totalCount = item.count;
     useLube = item.lube;
+    if (item.expKey != null) { experience = item.expKey; }
+    hasCalculated = true;
+    computeSettings();
     addLog("[已恢复] 设置已成功恢复", "success");
   }
 
@@ -676,6 +698,37 @@ app LandscapePro {
       min-height: 48px;
     }
     .btn:active { transform: scale(0.97); }
+    .btn:disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
+      box-shadow: none;
+      transform: none;
+    }
+    .btn:disabled:hover { opacity: 0.38; transform: none; }
+    .hint {
+      margin: 10px 0 0;
+      font-size: 0.8rem;
+      color: var(--md-sys-color-on-surface-variant);
+    }
+    .chip-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .chip {
+      min-height: 38px;
+      padding: 8px 16px;
+      border-radius: 9999px;
+      border: 1px solid var(--md-sys-color-outline-variant);
+      background: transparent;
+      color: var(--md-sys-color-on-surface-variant);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .chip:hover { border-color: var(--md-sys-color-primary); color: var(--md-sys-color-primary); }
+    .chip.active {
+      background: var(--md-sys-color-primary-container);
+      color: var(--md-sys-color-on-primary-container);
+      border-color: transparent;
+    }
     .btn.filled {
       background: var(--md-sys-color-primary);
       color: var(--md-sys-color-on-primary);
@@ -974,6 +1027,16 @@ app LandscapePro {
               }
 
               div(class = "form-group") {
+                label { text "经验档位"; }
+                div(class = "chip-row") {
+                  button(class = "chip", class:active = experience == "beginner", on:click = { setExperience("beginner"); }) { text "初级"; }
+                  button(class = "chip", class:active = experience == "intermediate", on:click = { setExperience("intermediate"); }) { text "中级"; }
+                  button(class = "chip", class:active = experience == "advanced", on:click = { setExperience("advanced"); }) { text "高级"; }
+                  button(class = "chip", class:active = experience == "expert", on:click = { setExperience("expert"); }) { text "专家级"; }
+                }
+              }
+
+              div(class = "form-group") {
                 label { text "总循环次数"; }
                 input(
                   class = "text-field",
@@ -990,11 +1053,15 @@ app LandscapePro {
                 button(class = "btn filled", on:click = { calculate(); }) { text "计算"; }
                 button(
                   class = "btn filled",
-                  attr:style = hasCalculated && !isRunning ? "" : "opacity:0.38; pointer-events:none;",
+                  prop:disabled = !hasCalculated || isRunning,
                   on:click = { startSession(); }
                 ) {
                   text "开始进程";
                 }
+              }
+
+              when (!hasCalculated) {
+                p(class = "hint") { text "先点「计算」得到频率与安全评分，再开始进程。"; }
               }
 
               when (hasCalculated) {
@@ -1006,6 +1073,10 @@ app LandscapePro {
                   div(class = "result-row") {
                     span { text "预计耗时:"; }
                     span(class = "result-val") { text string(round(number(totalCount) * actionDelay / 60 * 10) / 10) + " 分钟"; }
+                  }
+                  div(class = "result-row") {
+                    span { text "经验档位:"; }
+                    span(class = "result-val") { text expLabel; }
                   }
                   div(class = "result-row") {
                     span { text "进入总数:"; }

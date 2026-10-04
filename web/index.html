@@ -4,10 +4,25 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>JLC OS</title>
+  <!-- 共享设计系统：.jlc 应用引用的 --ink/--border/--surface… 与 .muted/.badge 工具类。
+       0.5 外壳用的是同一份（web/tokens.css），两边渲染色一致。 -->
+  <link rel="stylesheet" href="./tokens.css" />
+  <script>
+    /* 首屏主题：跟着共享样式表立刻落地 data-theme，首帧就是对的颜色；
+       与 0.5 外壳共用同一个 localStorage 键，两边切主题互相同步。 */
+    (function () {
+      try {
+        var raw = localStorage.getItem("jlc05-theme");
+        var theme = raw === "light" || raw === "dark" ? raw
+          : (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.dataset.theme = theme;
+      } catch (error) { /* 忽略 */ }
+    })();
+  </script>
   <style>
-    html, body { margin: 0; padding: 0; min-height: 100dvh; background: #fff; }
+    html, body { margin: 0; padding: 0; min-height: 100dvh; }
     #kernel-viewport { width: 100%; min-height: 100dvh; }
-    .fatal-box { padding: 20px; color: #d32f2f; font-family: monospace; font-size: 14px; white-space: pre-wrap; line-height: 1.6; }
+    .fatal-box { padding: 20px; color: var(--md-sys-color-error, #d32f2f); font-family: var(--mono, monospace); font-size: 14px; white-space: pre-wrap; line-height: 1.6; }
   </style>
 </head>
 <body>

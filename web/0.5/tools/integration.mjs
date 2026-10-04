@@ -22,7 +22,7 @@ const WEB05 = resolve(HERE, "..");
 process.chdir(resolve(HERE, "..", "..", "..")); // 仓库根：支持文件与相对路径
 
 const { JLC } = await import(join(process.cwd(), "jlc.js"));
-const { createDOM } = await import(join(process.cwd(), "support/fake-dom.js"));
+const { FakeEvent, createDOM } = await import(join(process.cwd(), "support/fake-dom.js"));
 const { parsePageMeta } = await import(join(WEB05, "host", "meta.js"));
 const { createStore } = await import(join(WEB05, "host", "storage.js"));
 const { createPermissions } = await import(join(WEB05, "host", "permissions.js"));
@@ -128,9 +128,14 @@ async function mountApp(name, { grants = {}, seed = {} } = {}) {
   console.log("  todo ok（水合 + 持久化）");
 }
 
-/* 3. notes：水合到 textarea value */
+/* 3. notes：水合到 textarea value + 列表交互 */
 {
-  const seed = { notes: [{ id: 7, title: "水合笔记", body: "正文甲" }], currentId: 7, draftTitle: "水合笔记", draftBody: "正文甲" };
+  const seed = {
+    notes: [{ id: 7, title: "水合笔记", body: "正文甲" }, { id: 8, title: "第二篇", body: "正文乙" }],
+    currentId: 7,
+    draftTitle: "水合笔记",
+    draftBody: "正文甲",
+  };
   const { handle, target, errors } = await mountApp("notes", { grants: { storage: "always", clipboard: "always", files: "always" }, seed });
   await sleep(120);
   const html = toText(target);
@@ -138,9 +143,28 @@ async function mountApp(name, { grants = {}, seed = {} } = {}) {
   const textarea = target.querySelector ? target.querySelector("textarea") : null;
   const taValue = textarea ? (textarea.getAttribute("value") ?? textarea.value ?? "") : "";
   assert.ok(taValue.includes("正文甲"), "笔记正文水合（textarea value）");
+
+  // 交互回归：列表项的 on:click = { select(n.id); } 必须把 each 变量真的传进 action。
+  // 事件帧深度算错时，这里拿到的会是 $event 快照，点谁都没反应。
+  const items = [...target.querySelectorAll("li")].filter((node) => node.classList.contains("notes-item"));
+  assert.equal(items.length, 2, "两条笔记都在列表里");
+  items[1].dispatchEvent(new FakeEvent("click", { bubbles: true }));
+  handle.flush?.();
+  await sleep(30);
+  const switched = textarea.getAttribute("value") ?? textarea.value ?? "";
+  assert.ok(switched.includes("正文乙"), "点第二条应切换编辑区内容，实际: " + switched.slice(0, 24));
+
+  const removeButtons = [...target.querySelectorAll("button")].filter((node) => node.textContent.trim() === "×");
+  assert.equal(removeButtons.length, 2, "每行一个删除按钮");
+  removeButtons[1].dispatchEvent(new FakeEvent("click", { bubbles: true }));
+  handle.flush?.();
+  await sleep(30);
+  const after = [...target.querySelectorAll("li")].filter((node) => node.classList.contains("notes-item"));
+  assert.equal(after.length, 1, "删除按钮应真的删掉那一行");
+  assert.ok(!toText(target).includes("第二篇"), "被删的标题从界面消失");
   assert.ok(!errors.length, "无运行期错误: " + errors.map((e) => e.message).join(";"));
   handle.unmount();
-  console.log("  notes ok");
+  console.log("  notes ok（水合 + 列表交互）");
 }
 
 /* 4. files：占位渲染 + 按钮 */

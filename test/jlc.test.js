@@ -381,3 +381,118 @@ app Empty {
   runtime.unmount();
   assert.equal(target.textContent, "");
 });
+
+test("属性名里的连字符与冒号等价：attr:data-theme ≡ attr:data:theme", () => {
+  // 回归：SVG / 无障碍属性的日常写法（data-theme、stroke-width、aria-label）曾直接报
+  // “应为“=””，把一整份 landscape.jlc 挡在部署之外。现在两种写法产出的 DOM 完全一致。
+  const source = String.raw`
+app Dash {
+  state theme = "dark";
+  view {
+    div(
+      attr:data-theme = theme,
+      attr:stroke-width = "2",
+      attr:viewBox = "0 0 24 24",
+      aria-label = "带连字符",
+      data-picked = 1
+    ) {}
+    div(attr:data:theme = theme) {}
+  }
+}`;
+  const program = JLC.compile(source, { sourceName: "dash.jlc" });
+  assert.equal(program.module.verified, true);
+
+  const { document, target } = createDOM();
+  const handle = JLC.mount(program.module, target, { document });
+  const [first, second] = target.querySelectorAll("div");
+  assert.equal(first.getAttribute("data-theme"), "dark");
+  assert.equal(first.getAttribute("stroke-width"), "2");
+  assert.equal(first.getAttribute("viewBox"), "0 0 24 24", "SVG 大小写原样保留");
+  assert.equal(first.getAttribute("aria-label"), "带连字符");
+  assert.equal(first.getAttribute("data-picked"), "1");
+  assert.equal(second.getAttribute("data-theme"), "dark", "冒号写法结果一致");
+  handle.unmount();
+});
+
+test("带空格的减法仍是表达式，不会被属性名吞掉", () => {
+  const { document, target } = createDOM();
+  const handle = JLC.mount(
+    "app Math { state a = 5; view { div(attr:data-x = a - 1) {} } }",
+    target,
+    { document },
+  );
+  assert.equal(target.querySelector("div").getAttribute("data-x"), "4");
+  handle.unmount();
+});
+
+test("属性名缺 = 时报错带上属性名，便于定位", () => {
+  assert.throws(
+    () => JLC.compile("app Broken { view { div(attr:data-theme) {} } }", { sourceName: "broken.jlc" }),
+    (error) => error instanceof JLCCompileError && error.message.includes("attr:data-theme"),
+  );
+});
+
+test("事件体能同时取到外层变量与 $event（回归：each 变量曾被读成 $event）", () => {
+  // 运行时帧链是 [事件处理器帧 → 事件帧($event) → 渲染帧]，编译期少算一层深度时，
+  // 事件体里的 each/item 变量会解析到事件帧槽 0——拿到的其实是 $event 快照，
+  // 于是「列表里每个按钮点下去都毫无反应」。这里同时守住两条通路。
+  const source = String.raw`
+app Events {
+  state items = [{ id: 7, label: "seven" }, { id: 8, label: "eight" }];
+  state picked = -1;
+  state typed = "";
+  action pick(id) { picked = id; }
+  action type(value) { typed = value; }
+  view {
+    ul {
+      each (item in items key item.id) {
+        li { button(on:click = { pick(item.id); }) { text item.label; } }
+      }
+    }
+    input(on:input = { type($event.value); })
+    p { text string(picked) + "/" + typed; }
+  }
+}`;
+  const { document, target } = createDOM();
+  const handle = JLC.mount(source, target, { document });
+  const buttons = target.querySelectorAll("button");
+  assert.equal(buttons.length, 2);
+  buttons[1].dispatchEvent(new FakeEvent("click", { bubbles: true }));
+  handle.flush?.();
+  assert.equal(target.querySelector("p").textContent, "8/", "点击第二行应把 8 传进 action");
+
+  const input = target.querySelector("input");
+  input.value = "输入一点什么";
+  input.dispatchEvent(new FakeEvent("input", { bubbles: true }));
+  handle.flush?.();
+  assert.equal(target.querySelector("p").textContent, "8/输入一点什么", "$event 快照仍然可用");
+  handle.unmount();
+});
+
+test("嵌套 each 的事件体里，外层与内层循环变量都取得到", () => {
+  const source = String.raw`
+app Nested {
+  state groups = [{ name: "A", items: [{ id: 1 }, { id: 2 }] }, { name: "B", items: [{ id: 3 }] }];
+  state picked = "none";
+  action pick(group, id) { picked = group + "#" + string(id); }
+  view {
+    each (group in groups key group.name) {
+      each (row in group.items key row.id) {
+        button(on:click = { pick(group.name, row.id); }) { text "选" }
+      }
+    }
+    p { text picked; }
+  }
+}`;
+  const { document, target } = createDOM();
+  const handle = JLC.mount(source, target, { document });
+  const buttons = target.querySelectorAll("button");
+  assert.equal(buttons.length, 3);
+  buttons[2].dispatchEvent(new FakeEvent("click", { bubbles: true }));
+  handle.flush?.();
+  assert.equal(target.querySelector("p").textContent, "B#3");
+  buttons[1].dispatchEvent(new FakeEvent("click", { bubbles: true }));
+  handle.flush?.();
+  assert.equal(target.querySelector("p").textContent, "A#2");
+  handle.unmount();
+});
