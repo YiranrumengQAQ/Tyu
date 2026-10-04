@@ -430,7 +430,14 @@ export class Parser {
             const separator = this.advance().value;
             name += `${separator}${this.expectIdentifier("属性修饰符不完整").value}`;
           }
-          this.expect("=");
+          // 【0.4 自愈引擎】属性名里的连字符：HTML 里 `data-theme` / `aria-label` / `stroke-width`
+          // 是日常写法，这里按“紧邻的 `-`”直接并入属性名，与 `attr:data:theme` 完全等价
+          // （带空格的 `a - b` 仍是减法表达式，不会被吞进来）。
+          while (this.is("-") && this.current().start === this.current(-1).end) {
+            this.advance();
+            name += `-${this.expectIdentifier("属性名连字符后缺少名称").value}`;
+          }
+          this.expect("=", `属性“${name}”后应为“=”`);
           let value;
           if (name.startsWith("on:") && this.is("{")) {
             value = { type: "EventBlock", body: this.parseStatementBlock(), loc: first };
@@ -1462,7 +1469,10 @@ class Codegen {
       let funcIndex;
       // 统一事件帧约定：事件体/事件表达式都在“事件帧”之上执行，
       // $event 位于事件帧槽 0（相对当前函数帧 depth 1）。
-      const eventFrame = new LexicalScope(scope, false);
+      // boundary = true 是硬性要求：运行时的帧链是 [事件处理器帧 → 事件帧 → 渲染帧 → …]，
+      // 事件帧本身占一层深度。早前这里写 false，导致事件体里引用 each/item 这类外层
+      // 变量时深度少算一层，读到的其实是 $event（列表里的按钮全都点不动）。
+      const eventFrame = new LexicalScope(scope, true);
       eventFrame.declareFixed("$event", 0, false);
       if (attribute.value.type === "EventBlock") {
         funcIndex = this.buildFunction(FUNCTION_KIND.BODY, `event:${type}`, (inner, innerScope) => {

@@ -8,7 +8,8 @@
  */
 app HtmlPreview {
   state source = "<h1>你好，沙箱</h1>\n<style>body{font:16px/1.6 system-ui;margin:14px;color:#0b0d12}h1{font-size:20px}</style>\n<p>这里的 <code>&lt;script&gt;</code> 会执行，但它是 opaque origin：读不到宿主 DOM，也拿不到宿主的 localStorage。</p>\n<button onclick=\"document.getElementById('n').textContent = String(Number(document.getElementById('n').textContent) + 1)\">iframe 里的按钮：点我计数</button>\n<p>计数 <span id='n'>0</span></p>";
-  state staged = "";
+  /* 编辑区与预览从同一份示例起步：左边空了右边却有内容会让人以为坏了 */
+  state staged = source;
   state pending = 0;
   state revealed = false;
 
@@ -60,7 +61,8 @@ app HtmlPreview {
           span(class = "muted") { text bytes + " 字节"; }
           when (previewing) { span(class = "badge badge--warn") { text "等待防抖…"; } }
         }
-        textarea(bind:value = staged, on:input = { stage($event.target.value); }, spellcheck = false, aria:label = "HTML 源码", rows = 14);
+        /* $event 是安全快照（没有 target 引用），取输入值要用 $event.value */
+        textarea(bind:value = staged, on:input = { stage($event.value); }, spellcheck = false, aria:label = "HTML 源码", rows = 14);
         div(class = "html-bar") {
           button(on:click = { stage(source); }) { text "重新渲染"; }
           button(on:click = { copySource(); }) { text revealed ? "收起完整文档" : "展开完整文档"; }

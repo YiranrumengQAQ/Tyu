@@ -72,7 +72,9 @@ export async function registerServiceWorker(swUrl, ui) {
   try {
     registration = await navigator.serviceWorker.register(swUrl);
     registration.addEventListener("updatefound", () => {
-      const worker = registration.active;
+      // updatefound 时新版本在 installing 上；active 还是旧的那个（对它挂 statechange
+      // 永远不会响，更新提示也就永远不会出现）。
+      const worker = registration.installing ?? registration.waiting;
       if (!worker) return;
       worker.addEventListener("statechange", () => {
         if (worker.state === "installed" && navigator.serviceWorker.controller) {
